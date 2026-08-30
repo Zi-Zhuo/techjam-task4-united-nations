@@ -68,23 +68,29 @@ class AgentTest(unittest.TestCase):
         self.agent.connection.close()
         self.temporary_directory.cleanup()
 
-    def test_first_three_turns_are_conversational_and_accumulate_context(self) -> None:
+    def test_questions_adapt_to_category_and_disclosed_attributes(self) -> None:
         first = self.agent.respond("session", "I need a shoe.", 1, 2)
         second = self.agent.respond("session", "Leather would be good.", 2, 2)
         third = self.agent.respond("session", "I want blue for running.", 3, 2)
 
-        self.assertEqual(first["ask_attribute"], "feature")
-        self.assertEqual(second["ask_attribute"], "material")
-        self.assertEqual(third["ask_attribute"], "use_case")
-        self.assertIn("what features", first["message"].lower())
-        self.assertIn("material", second["message"].lower())
-        self.assertIn("planning to use", third["message"].lower())
+        self.assertEqual(first["ask_attribute"], "use_case")
+        self.assertNotEqual(second["ask_attribute"], "material")
+        self.assertNotIn(third["ask_attribute"], {"color", "use_case", "material"})
+        self.assertIn("planning to use", first["message"].lower())
         self.assertEqual(third["recommendations"][0]["parent_asin"], "RUNNING")
         self.assertEqual(self.agent._sessions["session"].messages, [
             "I need a shoe.",
             "Leather would be good.",
             "I want blue for running.",
         ])
+
+    def test_boundary_answer_marks_attribute_as_answered(self) -> None:
+        first = self.agent.respond("session", "I need a shoe.", 1, 2)
+        second = self.agent.respond(
+            "session", f"I don't have a preference for {first['ask_attribute']}.", 2, 2
+        )
+
+        self.assertNotEqual(second["ask_attribute"], first["ask_attribute"])
 
     def test_intent_override_discards_intermediate_preferences(self) -> None:
         self.agent.respond("session", "I need a shoe.", 1, 2)

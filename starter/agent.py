@@ -22,12 +22,10 @@ STOPWORDS = {
     "i", "in", "is", "it", "me", "my", "of", "on", "or", "please", "some", "that",
     "the", "this", "to", "want", "with", "would", "you", "looking", "preference",
 }
-EARLY_QUESTIONS = (
-    ("feature", "To narrow this down, what features matter most to you?"),
-    ("material", "Thanks. Do you have a material preference, or anything you would rather avoid?"),
-    ("use_case", "Got it. How are you planning to use it most often?"),
-)
-LATER_QUESTIONS = (
+QUESTIONS = (
+    ("use_case", "How are you planning to use it most often?"),
+    ("material", "Do you have a material preference, or anything you would rather avoid?"),
+    ("feature", "What features matter most to you?"),
     ("color", "Is there a color you would prefer?"),
     ("style", "What kind of style or fit would suit you best?"),
     ("budget", "Do you have a budget range in mind?"),
@@ -35,6 +33,24 @@ LATER_QUESTIONS = (
     ("brand", "Do you have a preferred brand?"),
     ("other", "Is there anything else that would make one option stand out?"),
 )
+QUESTION_TEXT = dict(QUESTIONS)
+DEFAULT_PRIORITY = ("feature", "use_case", "material", "style", "color", "size", "budget", "brand", "other")
+CATEGORY_PRIORITIES = {
+    "shoe": ("use_case", "size", "material", "style", "color", "brand", "budget", "feature", "other"),
+    "dress": ("style", "size", "color", "material", "use_case", "budget", "brand", "feature", "other"),
+    "shirt": ("size", "style", "material", "color", "use_case", "budget", "brand", "feature", "other"),
+    "jacket": ("use_case", "material", "size", "style", "color", "budget", "brand", "feature", "other"),
+}
+ATTRIBUTE_PATTERNS = {
+    "material": re.compile(r"\b(cotton|polyester|nylon|leather|wool|silk|rayon|linen|spandex|denim|suede)\b", re.I),
+    "color": re.compile(r"\b(black|white|blue|red|pink|green|brown|gr[ae]y|purple|yellow|orange|beige)\b", re.I),
+    "size": re.compile(r"\b(size|width|wide|narrow|small|medium|large|plus size|petite|tall|\d+(?:\.5)?)\b", re.I),
+    "style": re.compile(r"\b(casual|formal|classic|modern|slim|regular|relaxed|loose|fitted|fit|vintage)\b", re.I),
+    "use_case": re.compile(r"\b(running|hiking|walking|work|office|gym|sport|outdoor|winter|summer|wedding|party|travel)\b", re.I),
+    "budget": re.compile(r"(?:\$\s*\d|\b(?:budget|price|under|below|less than|up to)\b)", re.I),
+    "brand": re.compile(r"\bbrand\b", re.I),
+    "feature": re.compile(r"\b(feature|comfort|comfortable|durable|waterproof|breathable|lightweight|warm|support)\b", re.I),
+}
 
 
 def _text(value: object) -> str:
@@ -76,6 +92,7 @@ def _terms(text: str) -> list[str]:
 class SessionState:
     messages: list[str] = field(default_factory=list)
     asked_attributes: set[str] = field(default_factory=set)
+    disclosed_attributes: set[str] = field(default_factory=set)
 
 
 class Agent:
@@ -113,6 +130,7 @@ class Agent:
         self._sessions: dict[str, SessionState] = {}
         self._product_ids: list[str] = []
         self._product_texts: list[str] = []
+        self._product_attributes: list[dict[str, set[str]]] = []
         self._product_embeddings: np.ndarray | None = None
         self._build_index()
 
@@ -129,7 +147,12 @@ class Agent:
                 product = json.loads(line)
                 row_index = len(self._product_ids)
                 self._product_ids.append(str(product["parent_asin"]))
-                self._product_texts.append(_product_text(product))
+                product_text = _product_text(product)
+                self._product_texts.append(product_text)
+                self._product_attributes.append({
+                    attribute: {match.lower() for match in pattern.findall(product_text)}
+                    for attribute, pattern in ATTRIBUTE_PATTERNS.items()
+                })
                 batch.append(
                     (
                         row_index,
@@ -230,13 +253,49 @@ class Agent:
             # Preserve the initial category request and replace later preferences.
             state.messages = state.messages[:1]
         state.messages.append(user_message)
+        state.disclosed_attributes.update(
+            attribute for attribute, pattern in ATTRIBUTE_PATTERNS.items()
+            if pattern.search(user_message)
+        )
 
-    def _question(self, state: SessionState, turn: int) -> tuple[str, str]:
-        if turn <= len(EARLY_QUESTIONS):
-            attribute, message = EARLY_QUESTIONS[turn - 1]
-        else:
-            available = [item for item in LATER_QUESTIONS if item[0] not in state.asked_attributes]
-            attribute, message = (available or [LATER_QUESTIONS[-1]])[0]
+    def _category_priority(self, query: str) -> tuple[str, ...]:
+        lowered = query.lower()
+        for category, priority in CATEGORY_PRIORITIES.items():
+            if category in lowered:
+                return priority
+        return DEFAULT_PRIORITY
+
+    def _question(self, state: SessionState, query: str) -> tuple[str, str]:
+        """Ask an unanswered question that best separates current candidates."""
+        priority = self._category_priority(query)
+        available = [
+            attribute for attribute in priority
+            if attribute not in state.asked_attributes
+            and attribute not in state.disclosed_attributes
+        ]
+        if not available:
+            return "other", QUESTION_TEXT["other"]
+
+        candidates = self._candidates(query)[:30]
+        candidate_indices = [row_index for row_index, _ in candidates]
+
+        def utility(attribute: str) -> tuple[float, int]:
+            values = [
+                frozenset(self._product_attributes[index].get(attribute, set()))
+                for index in candidate_indices
+            ]
+            covered = sum(bool(value) for value in values)
+            distinct_variants = len(set(values))
+            # Coverage prevents a single noisy match from dominating; diversity
+            # estimates whether the answer can reorder the current result set.
+            information = (
+                (covered / len(values)) * max(0, distinct_variants - 1)
+                if values else 0.0
+            )
+            return information, -priority.index(attribute)
+
+        attribute = max(available, key=utility)
+        message = QUESTION_TEXT[attribute]
         state.asked_attributes.add(attribute)
         return attribute, message
 
@@ -283,7 +342,7 @@ class Agent:
             raise RuntimeError("reset must be called before respond")
         self._remember(state, user_message)
         query = " ".join(f"Customer: {message}" for message in state.messages)
-        attribute, message = self._question(state, turn)
+        attribute, message = self._question(state, query)
         return {
             "message": message,
             "ask_attribute": attribute,
