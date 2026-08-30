@@ -3,12 +3,23 @@ name = "techjam-conversational-search"
 version = "0.1.0"
 description = "Reproducible environment for the TechJam Conversational E-Commerce Search Challenge"
 channels = ["conda-forge"]
-platforms = ["linux-64", "osx-64", "osx-arm64", "win-64"]
+platforms = [
+    { platform = "linux-64", cuda = "12" },
+    "osx-64",
+    "osx-arm64",
+    "win-64",
+]
 
 [dependencies]
 python = ">=3.10,<3.14"
 numpy = ">=2.0,<3"
 sentence-transformers = ">=5.0,<6"
+
+# conda-forge publishes the CUDA-enabled PyTorch variant only for NVIDIA
+# platforms. Keep the portable CPU dependency resolution for macOS, while
+# selecting the GPU metapackage on Linux; it pulls the matching CUDA runtime.
+[target.linux-64.dependencies]
+pytorch-gpu = ">=2.13,<2.14"
 
 [tasks]
 download-data = "python scripts/data.py download"

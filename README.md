@@ -94,6 +94,16 @@ The default model runs locally and the baseline therefore reports zero API token
 first embedding build require network access and may take tens of minutes on CPU; later evaluations can run
 from the local model and embedding caches.
 
+The agent automatically selects CUDA when `torch.cuda.is_available()` is true and otherwise uses CPU. To
+override the selection, set `BERT_DEVICE=cuda` or `BERT_DEVICE=cpu`.
+
+On Linux, Pixi resolves the `pytorch-gpu` package and CUDA 12 runtime (`linux-64-cuda-12`). On a machine
+with an NVIDIA driver, install the environment with `pixi install`, then verify it with:
+
+```bash
+pixi run python -c "import torch; print(torch.version.cuda, torch.cuda.is_available())"
+```
+
 ## Agent Interface
 
 ```python

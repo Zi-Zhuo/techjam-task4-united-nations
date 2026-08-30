@@ -109,6 +109,12 @@ class AgentTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "reset must be called"):
             self.agent.respond("missing", "shoe", 1, 1)
 
+    def test_device_is_auto_detected_or_can_be_overridden(self) -> None:
+        self.assertIn(self.agent.device, {"cpu", "cuda"})
+        forced = Agent(self.catalog_path, encoder=KeywordEncoder(), cache_dir=None, device="cpu")
+        self.assertEqual(forced.device, "cpu")
+        forced.connection.close()
+
     def test_catalog_embeddings_are_reused_from_cache(self) -> None:
         cache_dir = Path(self.temporary_directory.name) / "cache"
         first_encoder = KeywordEncoder()
