@@ -106,6 +106,18 @@ class SessionState:
     superseded_values: dict[str, set[str]] = field(default_factory=dict)
 
 
+def _auto_device(requested: str | None = None) -> str:
+    """Return an explicit device override or the best available torch device."""
+    device = requested or os.environ.get("BERT_DEVICE")
+    if device:
+        return device
+    try:
+        import torch
+    except ImportError:  # pragma: no cover - torch is installed with sentence-transformers
+        return "cpu"
+    return "cuda" if torch.cuda.is_available() else "cpu"
+
+
 class Agent:
     """Conversation-first BM25 retrieval with Sentence-BERT reranking.
 
@@ -123,6 +135,7 @@ class Agent:
         cache_dir: str | Path | None = ".cache/bert_embeddings",
         candidate_count: int = 250,
         dense_weight: float = 0.7,
+        device: str | None = None,
         rrf_k: int = 60,
     ) -> None:
         if candidate_count < 1:
@@ -136,6 +149,8 @@ class Agent:
         self.model_name = model_name or os.environ.get(
             "BERT_MODEL_NAME", "sentence-transformers/all-MiniLM-L6-v2"
         )
+        self.device = _auto_device(device)
+        print(f"[BERT] using device: {self.device}", flush=True)
         self.encoder = encoder
         self.cache_dir = Path(cache_dir) if cache_dir is not None else None
         self.candidate_count = candidate_count
@@ -199,9 +214,13 @@ class Agent:
             # without network access. A cache miss falls back to the normal
             # online download path on the first run.
             try:
-                self.encoder = SentenceTransformer(self.model_name, local_files_only=True)
+                self.encoder = SentenceTransformer(
+                    self.model_name,
+                    device=self.device,
+                    local_files_only=True,
+                )
             except Exception:
-                self.encoder = SentenceTransformer(self.model_name)
+                self.encoder = SentenceTransformer(self.model_name, device=self.device)
         return self.encoder
 
     def _cache_path(self) -> Path | None:

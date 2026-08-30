@@ -194,6 +194,14 @@ BERT_MODEL_NAME=sentence-transformers/all-MiniLM-L6-v2 BERT_BATCH_SIZE=128 pixi 
 ```
 
 ローカルモデルなのでAPIトークン使用量は0です。モデル名とバッチサイズは上記の環境変数で変更できます。
+CUDAが利用可能な場合は自動的にCUDAを選択し、利用できない場合はCPUへフォールバックします。
+`BERT_DEVICE=cuda` または `BERT_DEVICE=cpu` を指定すれば明示的に上書きできます。
+Linux向けPixi環境では `pytorch-gpu` とCUDA 12ランタイム（`linux-64-cuda-12`）を解決します。
+NVIDIAドライバが見える環境でインストール後、次で確認できます。
+
+```bash
+pixi run python -c "import torch; print(torch.version.cuda, torch.cuda.is_available())"
+```
 
 ## セットアップと実行
 
