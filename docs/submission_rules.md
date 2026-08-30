@@ -90,10 +90,14 @@ the organizer may treat the run as invalid.
 ```text
 submission/
   agent.py
-  requirements.txt
+  pixi.toml
+  pixi.lock
   README.md
   src/
 ```
+
+This participant kit uses `pixi run evaluate` as its reproducible harness command. If a team adds
+dependencies, declare them in `pixi.toml` and commit the updated `pixi.lock`.
 
 ## Final Notes
 

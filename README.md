@@ -1,12 +1,14 @@
 # TechJam Conversational E-Commerce Search Challenge
 
+[日本語版 README](README_ja.md)
+
 Build an AI shopping agent that asks useful follow-up questions and recommends the customer's hidden target product within at most 10 turns.
 
 ## What You Receive
 
 - A frozen catalog of 50,000 products from the `Clothing_Shoes_and_Jewelry` category of Amazon Reviews 2023.
 - 200 labeled public sessions for local development.
-- A weak BM25 starter agent and deterministic local evaluator.
+- A BM25 + Sentence-BERT hybrid starter agent and deterministic local evaluator.
 - The Agent API contract and scoring rules.
 
 The organizer keeps 800 additional sessions private for final evaluation.
@@ -21,30 +23,76 @@ For each session, your agent receives an anonymized preference profile and a sho
 
 The session ends when the target product appears in the scored Top 10 or after turn 10. Sessions cover Buying, Browsing, Intent Override, and Boundary behavior.
 
-## Download the Catalog
+## How the Customer Simulator and Target Product Work
 
-Download `catalog.jsonl.gz` from the GitHub Release attached to this repository, then run:
+Each evaluation session has one target product fixed in advance. The public development target is stored
+as `ground_truth.parent_asin` in `data/public_set.jsonl`; private targets and intent state are not passed to
+the Agent. The Agent searches and recommends IDs from the downloaded 50,000-row `data/catalog.jsonl`.
+
+The released customer side is a deterministic simulator rather than a free-form chat model. It derives
+hard constraints and soft preferences from the target product's metadata. On later turns it uses the
+Agent's structured `ask_attribute`—not semantic interpretation of `message`—to decide which undisclosed
+constraint to return. Buying sessions reveal a constraint early, Browsing sessions start vague, Intent
+Override sessions replace a preference on turn 3 or 4, and Boundary sessions may answer that they have no
+preference. See [README_ja.md](README_ja.md) for the detailed flow and examples.
+
+## Quick Start with Pixi
+
+[Install Pixi](https://pixi.sh/latest/installation/), then run every command from the repository root:
 
 ```bash
-gzip -dk catalog.jsonl.gz
-mv catalog.jsonl data/catalog.jsonl
+pixi install
+pixi run download-data
+pixi run check
+pixi run evaluate
 ```
 
-Verify the downloaded file using the published `SHA256SUMS` file.
+Pixi creates and uses the locked Python environment automatically. The data task downloads the frozen
+`catalog.jsonl.gz` from the `participant-kit` GitHub Release, verifies its published SHA-256 digest,
+decompresses it to `data/catalog.jsonl`, and validates all 50,000 rows. It is safe to rerun; an existing
+valid catalog is left in place. Use `pixi run download-data --force` only when you intend to replace it.
 
-## Run the Starter
+Available tasks:
 
-Python 3.10 or later is recommended. The starter uses only the Python standard library.
+| Task | Purpose |
+| --- | --- |
+| `pixi run download-data` | Download, checksum, decompress, and validate the catalog |
+| `pixi run data-info` | Show dataset fields, types, row counts, and scenario counts |
+| `pixi run validate-public-data` | Validate the committed 200-session public set |
+| `pixi run validate-data` | Validate both the public set and downloaded catalog |
+| `pixi run test` | Run unit tests |
+| `pixi run check` | Run unit tests and validate both datasets |
+| `pixi run evaluate` | Run the starter on the public set and write `results.json` |
 
-```bash
-python3 -m evaluator.local_evaluator
-```
+Python 3.10–3.13 and the Sentence Transformers/PyTorch dependencies are locked through `pixi.toml`.
 
 Edit `starter/agent.py` to implement your system. Do not edit the evaluator or public labels when reporting your local score.
 The command writes per-session results and aggregate metrics to `results.json`.
 
-The included weak BM25 starter scores Hit Rate@10 `0.125`, MRR `0.068034`, and
+The historical weak BM25 starter scores Hit Rate@10 `0.125`, MRR `0.068034`, and
 MTTC `9.81` on the released public set. See `docs/baseline_results.json`.
+
+## BERT hybrid baseline
+
+The current starter is a conversation-first hybrid retriever:
+
+1. It asks natural follow-up questions about feature, material, and use case during turns 1–3.
+2. It accumulates the customer's answers as one semantic query while still returning provisional
+   recommendations on every turn.
+3. SQLite FTS5/BM25 retrieves 250 candidates, and
+   `sentence-transformers/all-MiniLM-L6-v2` reranks them by normalized embedding similarity.
+4. An explicit intent override drops intermediate preferences while retaining the initial category request.
+
+On the first evaluation, the model is downloaded and the 50,000 catalog embeddings are written to
+`.cache/bert_embeddings/`; subsequent runs reuse that cache. The model and encoding batch size are configurable:
+
+```bash
+BERT_MODEL_NAME=sentence-transformers/all-MiniLM-L6-v2 BERT_BATCH_SIZE=128 pixi run evaluate
+```
+
+The default model runs locally and the baseline therefore reports zero API tokens. Model download and the
+first embedding build require network access and may take tens of minutes on CPU; later evaluations can run
+from the local model and embedding caches.
 
 ## Agent Interface
 
@@ -90,13 +138,17 @@ Teams may use any legally accessible LLM API or local model. Teams manage their 
 ## Files
 
 ```text
+README_ja.md                     Japanese guide to the simulator, target, and data flow
 data/public_set.jsonl             200 labeled development sessions
+data/catalog.jsonl                downloaded frozen 50,000-product catalog (gitignored)
 docs/competition_specification.md participant rules and evaluation protocol
 docs/agent_api_contract.json      machine-readable Agent contract
 docs/evaluation_config.json       scoring configuration
 docs/baseline_results.json        reproducible weak-starter reference score
 starter/agent.py                  editable weak starter
 evaluator/local_evaluator.py      public-set simulator and scorer
+scripts/data.py                   catalog downloader and dataset validator/inspector
+pixi.toml / pixi.lock             reproducible environment, platforms, and commands
 ```
 
 ## Judging and Submission Policy

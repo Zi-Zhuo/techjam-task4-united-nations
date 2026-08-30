@@ -1,0 +1,20 @@
+[workspace]
+name = "techjam-conversational-search"
+version = "0.1.0"
+description = "Reproducible environment for the TechJam Conversational E-Commerce Search Challenge"
+channels = ["conda-forge"]
+platforms = ["linux-64", "osx-64", "osx-arm64", "win-64"]
+
+[dependencies]
+python = ">=3.10,<3.14"
+numpy = ">=2.0,<3"
+sentence-transformers = ">=5.0,<6"
+
+[tasks]
+download-data = "python scripts/data.py download"
+data-info = "python scripts/data.py describe"
+validate-public-data = "python scripts/data.py validate-public"
+validate-data = "python scripts/data.py validate"
+test = "python -m unittest discover -s tests -v"
+check = { depends-on = ["test", "validate-data"] }
+evaluate = { cmd = "python -m evaluator.local_evaluator", depends-on = ["validate-data"] }
