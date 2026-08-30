@@ -33,6 +33,10 @@ QUESTIONS = (
     ("brand", "Do you have a preferred brand?"),
     ("other", "Is there anything else that would make one option stand out?"),
 )
+FULL_RESET_RE = re.compile(
+    r"\b(ignore (?:my )?(?:earlier|previous)|start over|forget (?:that|everything))\b",
+    re.IGNORECASE,
+)
 QUESTION_TEXT = dict(QUESTIONS)
 DEFAULT_PRIORITY = ("feature", "use_case", "material", "style", "color", "size", "budget", "brand", "other")
 CATEGORY_PRIORITIES = {
@@ -99,6 +103,7 @@ class SessionState:
     asked_attributes: set[str] = field(default_factory=set)
     disclosed_attributes: set[str] = field(default_factory=set)
     excluded_values: dict[str, set[str]] = field(default_factory=dict)
+    superseded_values: dict[str, set[str]] = field(default_factory=dict)
 
 
 class Agent:
@@ -276,6 +281,10 @@ class Agent:
                     negative_values.setdefault(attribute, set()).update(values)
 
             for attribute, values in all_values.items():
+                values -= state.superseded_values.get(attribute, set())
+                negative_values.get(attribute, set()).difference_update(
+                    state.superseded_values.get(attribute, set())
+                )
                 if values:
                     state.disclosed_attributes.add(attribute)
                 excluded = negative_values.get(attribute, set())
@@ -286,9 +295,26 @@ class Agent:
                     state.excluded_values.get(attribute, set()).difference_update(values - excluded)
 
     def _remember(self, state: SessionState, user_message: str) -> None:
-        if OVERRIDE_RE.search(user_message):
-            # Preserve the initial category request and replace later preferences.
+        is_override = bool(OVERRIDE_RE.search(user_message))
+        if is_override and FULL_RESET_RE.search(user_message):
+            # Explicit broad reset language still means all intermediate
+            # preferences should be discarded.
             state.messages = state.messages[:1]
+            state.superseded_values.clear()
+        elif is_override:
+            # For a targeted correction, retire only old values belonging to
+            # attributes supplied in the new message. Other constraints remain.
+            replacements = self._attribute_values(user_message)
+            previous_values: dict[str, set[str]] = {}
+            for message in state.messages:
+                for attribute, values in self._attribute_values(message).items():
+                    previous_values.setdefault(attribute, set()).update(values)
+            for attribute, new_values in replacements.items():
+                if not new_values:
+                    continue
+                superseded = state.superseded_values.setdefault(attribute, set())
+                superseded.update(previous_values.get(attribute, set()) - new_values)
+                superseded.difference_update(new_values)
         state.messages.append(user_message)
         self._refresh_preferences(state)
 
@@ -300,7 +326,10 @@ class Agent:
         excluded = {
             value for values in state.excluded_values.values() for value in values
         }
-        for value in sorted(excluded, key=len, reverse=True):
+        superseded = {
+            value for values in state.superseded_values.values() for value in values
+        }
+        for value in sorted(excluded | superseded, key=len, reverse=True):
             query = re.sub(rf"\b{re.escape(value)}\b", " ", query, flags=re.I)
         return re.sub(r"\s+", " ", query).strip()
 

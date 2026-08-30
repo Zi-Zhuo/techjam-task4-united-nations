@@ -178,6 +178,27 @@ class AgentTest(unittest.TestCase):
         ])
         self.assertEqual(response["recommendations"][0]["parent_asin"], "RUNNING")
 
+    def test_targeted_override_replaces_only_the_affected_attribute(self) -> None:
+        self.agent.respond(
+            "session", "I need black running shoes under $100.", 1, 2
+        )
+        response = self.agent.respond(
+            "session", "Actually, make them blue.", 2, 2
+        )
+
+        state = self.agent._sessions["session"]
+        query = self.agent._retrieval_query(state).lower()
+        self.assertEqual(state.messages, [
+            "I need black running shoes under $100.",
+            "Actually, make them blue.",
+        ])
+        self.assertEqual(state.superseded_values["color"], {"black"})
+        self.assertNotIn("black", query)
+        self.assertIn("blue", query)
+        self.assertIn("running", query)
+        self.assertIn("$100", query)
+        self.assertEqual(response["recommendations"][0]["parent_asin"], "RUNNING")
+
     def test_respond_requires_reset(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "reset must be called"):
             self.agent.respond("missing", "shoe", 1, 1)
