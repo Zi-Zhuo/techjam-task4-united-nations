@@ -51,6 +51,11 @@ ATTRIBUTE_PATTERNS = {
     "brand": re.compile(r"\bbrand\b", re.I),
     "feature": re.compile(r"\b(feature|comfort|comfortable|durable|waterproof|breathable|lightweight|warm|support)\b", re.I),
 }
+NEGATED_CLAUSE_RE = re.compile(
+    r"\b(?:do\s+not|don't|dont|no|not|never|without|avoid|excluding|except)\b[^,.;]*",
+    re.I,
+)
+ACCEPTANCE_RE = re.compile(r"\b(?:actually|instead|is fine|are fine|okay|ok|do want|would like)\b", re.I)
 
 
 def _text(value: object) -> str:
@@ -93,6 +98,7 @@ class SessionState:
     messages: list[str] = field(default_factory=list)
     asked_attributes: set[str] = field(default_factory=set)
     disclosed_attributes: set[str] = field(default_factory=set)
+    excluded_values: dict[str, set[str]] = field(default_factory=dict)
 
 
 def _auto_device(requested: str | None = None) -> str:
@@ -125,11 +131,14 @@ class Agent:
         candidate_count: int = 250,
         dense_weight: float = 0.7,
         device: str | None = None,
+        rrf_k: int = 60,
     ) -> None:
         if candidate_count < 1:
             raise ValueError("candidate_count must be positive")
         if not 0.0 <= dense_weight <= 1.0:
             raise ValueError("dense_weight must be between 0 and 1")
+        if rrf_k < 1:
+            raise ValueError("rrf_k must be positive")
 
         self.catalog_path = Path(catalog_path)
         self.model_name = model_name or os.environ.get(
@@ -141,6 +150,7 @@ class Agent:
         self.cache_dir = Path(cache_dir) if cache_dir is not None else None
         self.candidate_count = candidate_count
         self.dense_weight = dense_weight
+        self.rrf_k = rrf_k
         self.connection = sqlite3.connect(":memory:")
         self._sessions: dict[str, SessionState] = {}
         self._product_ids: list[str] = []
@@ -267,15 +277,51 @@ class Agent:
         # baseline intentionally retrieves only from what the customer says.
         self._sessions[session_id] = SessionState()
 
+    @staticmethod
+    def _attribute_values(text: str) -> dict[str, set[str]]:
+        return {
+            attribute: {match.group(0).lower() for match in pattern.finditer(text)}
+            for attribute, pattern in ATTRIBUTE_PATTERNS.items()
+        }
+
+    def _refresh_preferences(self, state: SessionState) -> None:
+        state.disclosed_attributes.clear()
+        state.excluded_values.clear()
+        for message in state.messages:
+            all_values = self._attribute_values(message)
+            negative_values: dict[str, set[str]] = {}
+            for clause in NEGATED_CLAUSE_RE.findall(message):
+                for attribute, values in self._attribute_values(clause).items():
+                    negative_values.setdefault(attribute, set()).update(values)
+
+            for attribute, values in all_values.items():
+                if values:
+                    state.disclosed_attributes.add(attribute)
+                excluded = negative_values.get(attribute, set())
+                if excluded:
+                    state.excluded_values.setdefault(attribute, set()).update(excluded)
+                # An explicit later acceptance reverses a previous exclusion.
+                if ACCEPTANCE_RE.search(message):
+                    state.excluded_values.get(attribute, set()).difference_update(values - excluded)
+
     def _remember(self, state: SessionState, user_message: str) -> None:
         if OVERRIDE_RE.search(user_message):
             # Preserve the initial category request and replace later preferences.
             state.messages = state.messages[:1]
         state.messages.append(user_message)
-        state.disclosed_attributes.update(
-            attribute for attribute, pattern in ATTRIBUTE_PATTERNS.items()
-            if pattern.search(user_message)
-        )
+        self._refresh_preferences(state)
+
+    @staticmethod
+    def _retrieval_query(state: SessionState) -> str:
+        query = " ".join(f"Customer: {message}" for message in state.messages)
+        # A dense encoder and BM25 both treat a negated term as a positive token.
+        # Remove excluded values from the query and enforce them separately below.
+        excluded = {
+            value for values in state.excluded_values.values() for value in values
+        }
+        for value in sorted(excluded, key=len, reverse=True):
+            query = re.sub(rf"\b{re.escape(value)}\b", " ", query, flags=re.I)
+        return re.sub(r"\s+", " ", query).strip()
 
     def _category_priority(self, query: str) -> tuple[str, ...]:
         lowered = query.lower()
@@ -319,6 +365,7 @@ class Agent:
         return attribute, message
 
     def _candidates(self, query: str) -> list[tuple[int, str]]:
+        """Return the independently ranked BM25 candidate pool."""
         unique_terms = list(dict.fromkeys(_terms(query)))[:80]
         if not unique_terms:
             return []
@@ -330,23 +377,59 @@ class Agent:
         ).fetchall()
         return [(int(row[0]), str(row[1])) for row in rows]
 
-    def _recommend(self, query: str, top_k: int) -> list[dict]:
-        candidates = self._candidates(query)
-        if not candidates:
-            return []
+    def _dense_candidates(
+        self, query_embedding: np.ndarray
+    ) -> list[tuple[int, str]]:
+        """Return exact cosine-nearest candidates from the full catalog."""
         embeddings = self._ensure_embeddings()
-        query_embedding = self._encode([query], show_progress_bar=False)[0]
-        indices = np.fromiter((row_index for row_index, _ in candidates), dtype=np.int64)
-        dense_scores = np.asarray(embeddings[indices] @ query_embedding, dtype=np.float32)
-        if len(candidates) == 1:
-            lexical_scores = np.ones(1, dtype=np.float32)
+        scores = np.asarray(embeddings @ query_embedding, dtype=np.float32)
+        count = min(self.candidate_count, len(scores))
+        if count == 0:
+            return []
+        if count == len(scores):
+            indices = np.argsort(-scores, kind="stable")
         else:
-            lexical_scores = 1.0 - np.arange(len(candidates), dtype=np.float32) / (len(candidates) - 1)
-        scores = self.dense_weight * dense_scores + (1.0 - self.dense_weight) * lexical_scores
-        order = np.argsort(-scores, kind="stable")[:top_k]
+            partition = np.argpartition(scores, -count)[-count:]
+            indices = partition[np.argsort(-scores[partition], kind="stable")]
+        return [(int(index), self._product_ids[int(index)]) for index in indices]
+
+    def _recommend(
+        self, query: str, top_k: int, excluded_values: dict[str, set[str]] | None = None
+    ) -> list[dict]:
+        # Load or build the catalog matrix before encoding the per-turn query.
+        self._ensure_embeddings()
+        query_embedding = self._encode([query], show_progress_bar=False)[0]
+        lexical_candidates = self._candidates(query)
+        dense_candidates = self._dense_candidates(query_embedding)
+
+        # BM25 and cosine similarity have unrelated numeric scales. Weighted
+        # Reciprocal Rank Fusion combines their rank positions instead, while
+        # retaining dense_weight as an intuitive balance between retrievers.
+        fused_scores: dict[int, float] = {}
+        for rank, (row_index, _) in enumerate(lexical_candidates, start=1):
+            fused_scores[row_index] = fused_scores.get(row_index, 0.0) + (
+                (1.0 - self.dense_weight) / (self.rrf_k + rank)
+            )
+        for rank, (row_index, _) in enumerate(dense_candidates, start=1):
+            fused_scores[row_index] = fused_scores.get(row_index, 0.0) + (
+                self.dense_weight / (self.rrf_k + rank)
+            )
+
+        if excluded_values:
+            fused_scores = {
+                row_index: score for row_index, score in fused_scores.items()
+                if not any(
+                    values & self._product_attributes[row_index].get(attribute, set())
+                    for attribute, values in excluded_values.items()
+                )
+            }
+        if not fused_scores:
+            return []
+
+        order = sorted(fused_scores, key=lambda index: (-fused_scores[index], index))[:top_k]
         return [
-            {"parent_asin": candidates[int(position)][1], "score": float(scores[position])}
-            for position in order
+            {"parent_asin": self._product_ids[row_index], "score": fused_scores[row_index]}
+            for row_index in order
         ]
 
     def respond(
@@ -360,11 +443,11 @@ class Agent:
         if state is None:
             raise RuntimeError("reset must be called before respond")
         self._remember(state, user_message)
-        query = " ".join(f"Customer: {message}" for message in state.messages)
+        query = self._retrieval_query(state)
         attribute, message = self._question(state, query)
         return {
             "message": message,
             "ask_attribute": attribute,
-            "recommendations": self._recommend(query, top_k),
+            "recommendations": self._recommend(query, top_k, state.excluded_values),
             "usage": {"prompt_tokens": 0, "completion_tokens": 0},
         }

@@ -26,6 +26,20 @@ class KeywordEncoder:
         )
 
 
+class SynonymEncoder:
+    """Maps different lexical forms to the same semantic dimension."""
+
+    def encode(self, texts: list[str], **kwargs: object) -> np.ndarray:
+        rows = []
+        for text in texts:
+            lowered = text.lower()
+            rows.append([
+                float("running" in lowered or "jogging" in lowered),
+                float("leather" in lowered),
+            ])
+        return np.asarray(rows, dtype=np.float32)
+
+
 def _write_catalog(path: Path) -> None:
     products = (
         {
@@ -91,6 +105,65 @@ class AgentTest(unittest.TestCase):
         )
 
         self.assertNotEqual(second["ask_attribute"], first["ask_attribute"])
+
+    def test_explicit_exclusion_filters_matching_products(self) -> None:
+        response = self.agent.respond("session", "I want shoes but do not want blue.", 1, 2)
+
+        self.assertEqual(response["recommendations"][0]["parent_asin"], "LEATHER")
+        self.assertNotIn(
+            "RUNNING", {item["parent_asin"] for item in response["recommendations"]}
+        )
+        state = self.agent._sessions["session"]
+        self.assertEqual(state.excluded_values["color"], {"blue"})
+        self.assertIn("color", state.disclosed_attributes)
+        self.assertNotIn("blue", self.agent._retrieval_query(state).lower())
+
+    def test_later_acceptance_reverses_an_exclusion(self) -> None:
+        self.agent.respond("session", "I need shoes but do not want blue.", 1, 2)
+        response = self.agent.respond("session", "Actually, blue is fine for running.", 2, 2)
+
+        self.assertNotIn("blue", self.agent._sessions["session"].excluded_values.get("color", set()))
+        self.assertEqual(response["recommendations"][0]["parent_asin"], "RUNNING")
+
+    def test_dense_retrieval_recovers_a_semantic_only_candidate(self) -> None:
+        agent = Agent(
+            self.catalog_path,
+            encoder=SynonymEncoder(),
+            cache_dir=None,
+            candidate_count=1,
+            dense_weight=0.7,
+        )
+        try:
+            agent.reset("semantic", {})
+            response = agent.respond("semantic", "I need something for jogging.", 1, 2)
+        finally:
+            agent.connection.close()
+
+        # "jogging" is absent from the catalog, so BM25 returns no candidates;
+        # the full-catalog dense retriever must recover the running product.
+        self.assertEqual(response["recommendations"][0]["parent_asin"], "RUNNING")
+
+    def test_rrf_unions_lexical_and_dense_candidate_pools(self) -> None:
+        agent = Agent(
+            self.catalog_path,
+            encoder=SynonymEncoder(),
+            cache_dir=None,
+            candidate_count=1,
+            dense_weight=0.5,
+        )
+        try:
+            query_embedding = agent._encode(["jogging"], show_progress_bar=False)[0]
+            lexical = agent._candidates("leather")
+            dense = agent._dense_candidates(query_embedding)
+            recommendations = agent._recommend("leather jogging", 2)
+        finally:
+            agent.connection.close()
+
+        self.assertEqual(lexical[0][1], "LEATHER")
+        self.assertEqual(dense[0][1], "RUNNING")
+        self.assertEqual(
+            {item["parent_asin"] for item in recommendations}, {"LEATHER", "RUNNING"}
+        )
 
     def test_intent_override_discards_intermediate_preferences(self) -> None:
         self.agent.respond("session", "I need a shoe.", 1, 2)
