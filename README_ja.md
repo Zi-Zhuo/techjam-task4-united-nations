@@ -250,3 +250,7 @@ TechnicalScore = 0.50 × HitRate@10 + 0.30 × MRR + 0.20 × Efficiency
 | [docs/agent_api_contract.json](docs/agent_api_contract.json) | Agent APIの機械可読スキーマ |
 | [docs/evaluation_config.json](docs/evaluation_config.json) | ターン数、Top K、評価式 |
 | [data/README.md](data/README.md) | データフィールドと取得方法 |
+
+
+えー少しだけ変更しました。
+
