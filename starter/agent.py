@@ -422,6 +422,30 @@ class Agent:
             indices = partition[np.argsort(-scores[partition], kind="stable")]
         return [(int(index), self._product_ids[int(index)]) for index in indices]
 
+    def _fuse_rankings(
+        self,
+        lexical_candidates: list[tuple[int, str]],
+        dense_candidates: list[tuple[int, str]],
+    ) -> dict[int, float]:
+        """Fuse rankings while keeping BM25 as the precision anchor.
+
+        ``dense_weight`` is an additive semantic boost, not a probability split.
+        A convex split such as 0.3 lexical / 0.7 dense lets dozens of dense-only
+        candidates outrank BM25's first result. Keeping lexical weight at 1.0
+        preserves exact-match precision while still rewarding semantic rank and
+        especially agreement between both retrievers.
+        """
+        fused_scores: dict[int, float] = {}
+        for rank, (row_index, _) in enumerate(lexical_candidates, start=1):
+            fused_scores[row_index] = fused_scores.get(row_index, 0.0) + (
+                1.0 / (self.rrf_k + rank)
+            )
+        for rank, (row_index, _) in enumerate(dense_candidates, start=1):
+            fused_scores[row_index] = fused_scores.get(row_index, 0.0) + (
+                self.dense_weight / (self.rrf_k + rank)
+            )
+        return fused_scores
+
     def _recommend(
         self, query: str, top_k: int, excluded_values: dict[str, set[str]] | None = None
     ) -> list[dict]:
@@ -431,18 +455,8 @@ class Agent:
         lexical_candidates = self._candidates(query)
         dense_candidates = self._dense_candidates(query_embedding)
 
-        # BM25 and cosine similarity have unrelated numeric scales. Weighted
-        # Reciprocal Rank Fusion combines their rank positions instead, while
-        # retaining dense_weight as an intuitive balance between retrievers.
-        fused_scores: dict[int, float] = {}
-        for rank, (row_index, _) in enumerate(lexical_candidates, start=1):
-            fused_scores[row_index] = fused_scores.get(row_index, 0.0) + (
-                (1.0 - self.dense_weight) / (self.rrf_k + rank)
-            )
-        for rank, (row_index, _) in enumerate(dense_candidates, start=1):
-            fused_scores[row_index] = fused_scores.get(row_index, 0.0) + (
-                self.dense_weight / (self.rrf_k + rank)
-            )
+        # Rank fusion avoids mixing incompatible raw BM25 and cosine scales.
+        fused_scores = self._fuse_rankings(lexical_candidates, dense_candidates)
 
         if excluded_values:
             fused_scores = {

@@ -165,6 +165,19 @@ class AgentTest(unittest.TestCase):
             {item["parent_asin"] for item in recommendations}, {"LEATHER", "RUNNING"}
         )
 
+    def test_dense_weight_does_not_overwhelm_the_best_lexical_match(self) -> None:
+        self.agent.dense_weight = 0.7
+        lexical = [(0, "LEXICAL")]
+        dense = [(index, f"DENSE-{index}") for index in range(1, 101)]
+
+        scores = self.agent._fuse_rankings(lexical, dense)
+        order = sorted(scores, key=lambda index: -scores[index])
+
+        # Regression: with the former (1-weight)/weight split, 82 dense-only
+        # candidates ranked ahead of lexical rank 1 when dense_weight was 0.7.
+        self.assertEqual(order[0], 0)
+        self.assertGreater(scores[0], scores[1])
+
     def test_intent_override_discards_intermediate_preferences(self) -> None:
         self.agent.respond("session", "I need a shoe.", 1, 2)
         self.agent.respond("session", "Leather would be good.", 2, 2)
