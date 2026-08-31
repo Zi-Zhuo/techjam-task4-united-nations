@@ -212,6 +212,44 @@ class AgentTest(unittest.TestCase):
         self.assertEqual(order[0], 0)
         self.assertGreater(scores[0], scores[1])
 
+    def test_constraint_coverage_boosts_the_more_complete_match(self) -> None:
+        baseline = {0: 0.02, 1: 0.02}
+
+        scores = self.agent._apply_constraint_coverage(
+            baseline,
+            {"blue", "running", "comfort"},
+        )
+
+        self.assertGreater(scores[1], scores[0])
+        self.assertEqual(set(scores), {0, 1})
+        self.assertEqual(baseline, {0: 0.02, 1: 0.02})
+
+    def test_constraint_terms_ignore_negative_and_boundary_content(self) -> None:
+        self.agent._remember(
+            self.agent._sessions["session"],
+            "I need running shoes but do not want blue.",
+        )
+        self.agent._remember(
+            self.agent._sessions["session"],
+            "I don't have an additional preference for material.",
+        )
+
+        terms = self.agent._positive_constraint_terms(
+            self.agent._sessions["session"]
+        )
+        self.assertIn("running", terms)
+        self.assertIn("shoes", terms)
+        self.assertNotIn("blue", terms)
+        self.assertNotIn("material", terms)
+
+    def test_zero_coverage_weight_preserves_rrf_scores(self) -> None:
+        self.agent.coverage_weight = 0.0
+        baseline = {0: 0.02, 1: 0.01}
+
+        scores = self.agent._apply_constraint_coverage(baseline, {"running"})
+
+        self.assertIs(scores, baseline)
+
     def test_recommendations_diversify_across_turns(self) -> None:
         first = self.agent.respond("session", "I need a shoe.", 1, 1)
         second = self.agent.respond("session", "I am still considering shoes.", 2, 1)

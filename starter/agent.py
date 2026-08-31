@@ -45,6 +45,11 @@ CATEGORY_PRIORITIES = {
     "shirt": ("feature", "material", "color", "style", "size", "use_case", "budget", "brand", "other"),
     "jacket": ("feature", "material", "color", "style", "size", "use_case", "budget", "brand", "other"),
 }
+COVERAGE_STOPWORDS = STOPWORDS | {
+    "actually", "additional", "customer", "earlier", "else", "fine", "judgment",
+    "key", "matters", "need", "option", "options", "prefer", "requirement",
+    "still", "those", "use",
+}
 HIGH_VALUE_ATTRIBUTES = frozenset({"feature", "material"})
 ATTRIBUTE_PATTERNS = {
     "material": re.compile(r"\b(cotton|polyester|nylon|leather|wool|silk|rayon|linen|spandex|denim|suede)\b", re.I),
@@ -157,6 +162,7 @@ class Agent:
         cache_dir: str | Path | None = ".cache/bert_embeddings",
         candidate_count: int = 250,
         dense_weight: float = 0.7,
+        coverage_weight: float = 0.01,
         device: str | None = None,
         rrf_k: int = 60,
     ) -> None:
@@ -164,6 +170,8 @@ class Agent:
             raise ValueError("candidate_count must be positive")
         if not 0.0 <= dense_weight <= 1.0:
             raise ValueError("dense_weight must be between 0 and 1")
+        if coverage_weight < 0.0:
+            raise ValueError("coverage_weight must be non-negative")
         if rrf_k < 1:
             raise ValueError("rrf_k must be positive")
 
@@ -177,6 +185,7 @@ class Agent:
         self.cache_dir = Path(cache_dir) if cache_dir is not None else None
         self.candidate_count = candidate_count
         self.dense_weight = dense_weight
+        self.coverage_weight = coverage_weight
         self.rrf_k = rrf_k
         self.connection = sqlite3.connect(":memory:")
         self._sessions: dict[str, SessionState] = {}
@@ -400,6 +409,32 @@ class Agent:
             query = re.sub(rf"\b{re.escape(value)}\b", " ", query, flags=re.I)
         return re.sub(r"\s+", " ", query).strip()
 
+    @staticmethod
+    def _positive_constraint_terms(state: SessionState) -> set[str]:
+        """Return active concrete terms suitable for soft coverage scoring."""
+        active_messages: list[str] = []
+        for message in state.messages:
+            if NO_PREFERENCE_RE.search(message):
+                continue
+            # A sentence can contain a positive request followed by a negative
+            # clause. Keep the positive portion and remove the full negation.
+            positive_text = NEGATED_CLAUSE_RE.sub(" ", message)
+            active_messages.append(positive_text)
+
+        text = " ".join(active_messages)
+        inactive = {
+            value
+            for values in (*state.excluded_values.values(), *state.superseded_values.values())
+            for value in values
+        }
+        for value in sorted(inactive, key=len, reverse=True):
+            text = re.sub(rf"\b{re.escape(value)}\b", " ", text, flags=re.I)
+        return {
+            token.lower()
+            for token in TOKEN_RE.findall(text)
+            if len(token) > 1 and token.lower() not in COVERAGE_STOPWORDS
+        }
+
     def _category_priority(self, query: str) -> tuple[str, ...]:
         lowered = query.lower()
         for category, priority in CATEGORY_PRIORITIES.items():
@@ -502,12 +537,29 @@ class Agent:
             )
         return fused_scores
 
+    def _apply_constraint_coverage(
+        self,
+        fused_scores: dict[int, float],
+        positive_terms: set[str] | None,
+    ) -> dict[int, float]:
+        """Softly reward candidates satisfying more active positive terms."""
+        if not positive_terms or self.coverage_weight == 0.0:
+            return fused_scores
+        denominator = float(len(positive_terms))
+        return {
+            row_index: score + self.coverage_weight * (
+                len(positive_terms & set(_terms(self._product_texts[row_index]))) / denominator
+            )
+            for row_index, score in fused_scores.items()
+        }
+
     def _recommend(
         self,
         query: str,
         top_k: int,
         excluded_values: dict[str, set[str]] | None = None,
         previously_recommended: set[str] | None = None,
+        positive_terms: set[str] | None = None,
     ) -> list[dict]:
         # Load or build the catalog matrix before encoding the per-turn query.
         self._ensure_embeddings()
@@ -528,6 +580,8 @@ class Agent:
             }
         if not fused_scores:
             return []
+
+        fused_scores = self._apply_constraint_coverage(fused_scores, positive_terms)
 
         ranked = sorted(fused_scores, key=lambda index: (-fused_scores[index], index))
         seen = previously_recommended or set()
@@ -559,6 +613,7 @@ class Agent:
             top_k,
             state.excluded_values,
             state.recommended_ids,
+            self._positive_constraint_terms(state),
         )
         state.recommended_ids.update(
             item["parent_asin"] for item in recommendations
