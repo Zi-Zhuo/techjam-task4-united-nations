@@ -369,8 +369,7 @@ class AgentTest(unittest.TestCase):
 
         self.assertEqual(len(list(cache_dir.glob("catalog-*.npy"))), 1)
         self.assertEqual(len(first_encoder.encoded_batches[0]), 2)
-        self.assertEqual(second_encoder.encoded_batches[0], ["Customer: running shoe"])
-        self.assertTrue(all(len(batch) != 2 for batch in second_encoder.encoded_batches))
+        self.assertEqual(second_encoder.encoded_batches, [["Customer: running shoe"]])
 
 
 if __name__ == "__main__":

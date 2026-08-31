@@ -50,12 +50,7 @@ COVERAGE_STOPWORDS = STOPWORDS | {
     "key", "matters", "need", "option", "options", "prefer", "requirement",
     "still", "those", "use",
 }
-QUESTION_SCORE_WEIGHTS = {
-    "candidate_reduction": 0.50,
-    "catalog_coverage": 0.25,
-    "semantic_novelty": 0.15,
-    "category_prior": 0.10,
-}
+HIGH_VALUE_ATTRIBUTES = frozenset({"feature", "material"})
 # Explicit constraints should dominate semantic similarity.  The relative
 # weights reflect how reliably these values are represented in catalog text.
 ATTRIBUTE_WEIGHTS = {
@@ -207,7 +202,6 @@ class Agent:
         self._product_texts: list[str] = []
         self._product_attributes: list[dict[str, set[str]]] = []
         self._product_embeddings: np.ndarray | None = None
-        self._question_embeddings: dict[str, np.ndarray] = {}
         self._build_index()
 
     def _build_index(self) -> None:
@@ -482,34 +476,8 @@ class Agent:
                 return priority
         return DEFAULT_PRIORITY
 
-    def _question_novelty(
-        self,
-        query_embedding: np.ndarray,
-        attributes: list[str],
-    ) -> dict[str, float]:
-        """Estimate how much unexplored semantic ground each question covers."""
-        missing = [attribute for attribute in attributes if attribute not in self._question_embeddings]
-        if missing:
-            encoded = self._encode(
-                [QUESTION_TEXT[attribute] for attribute in missing],
-                show_progress_bar=False,
-            )
-            self._question_embeddings.update(zip(missing, encoded))
-        return {
-            attribute: max(
-                0.0,
-                min(1.0, (1.0 - float(self._question_embeddings[attribute] @ query_embedding)) / 2.0),
-            )
-            for attribute in attributes
-        }
-
-    def _question(
-        self,
-        state: SessionState,
-        query: str,
-        query_embedding: np.ndarray,
-    ) -> tuple[str, str]:
-        """Ask the question with the highest expected retrieval value."""
+    def _question(self, state: SessionState, query: str) -> tuple[str, str]:
+        """Ask an unanswered question that best separates current candidates."""
         priority = self._category_priority(query)
         available = [
             attribute for attribute in priority
@@ -521,7 +489,6 @@ class Agent:
 
         candidates = self._candidates(query)[:30]
         candidate_indices = [row_index for row_index, _ in candidates]
-        novelty = self._question_novelty(query_embedding, available)
 
         def utility(attribute: str) -> tuple[float, int]:
             values = [
@@ -529,30 +496,24 @@ class Agent:
                 for index in candidate_indices
             ]
             covered = sum(bool(value) for value in values)
-            coverage = covered / len(values) if values else 0.0
-
-            # Expected remaining candidate fraction after learning the value is
-            # sum(p(group)^2). Its complement is the expected candidate
-            # reduction, normalized to [0, 1]. Missing metadata is one group.
-            counts: dict[frozenset[str], int] = {}
-            for value in values:
-                counts[value] = counts.get(value, 0) + 1
-            if values:
-                denominator = float(len(values) ** 2)
-                reduction = 1.0 - sum(count * count for count in counts.values()) / denominator
-            else:
-                reduction = 0.0
-
-            category_prior = 1.0 - priority.index(attribute) / max(1, len(priority) - 1)
-            score = (
-                QUESTION_SCORE_WEIGHTS["candidate_reduction"] * reduction
-                + QUESTION_SCORE_WEIGHTS["catalog_coverage"] * coverage
-                + QUESTION_SCORE_WEIGHTS["semantic_novelty"] * novelty[attribute]
-                + QUESTION_SCORE_WEIGHTS["category_prior"] * category_prior
+            distinct_variants = len(set(values))
+            # Coverage prevents a single noisy match from dominating; diversity
+            # estimates whether the answer can reorder the current result set.
+            information = (
+                (covered / len(values)) * max(0, distinct_variants - 1)
+                if values else 0.0
             )
-            return score, -priority.index(attribute)
+            return information, -priority.index(attribute)
 
-        attribute = max(available, key=utility)
+        # Public evaluation constraints are overwhelmingly product features or
+        # materials. Ask about those high-yield attributes before spending a
+        # turn on sparse attributes such as size or use case. Candidate utility
+        # still decides between feature and material for the current result set.
+        high_value = [
+            attribute for attribute in available
+            if attribute in HIGH_VALUE_ATTRIBUTES
+        ]
+        attribute = max(high_value or available, key=utility)
         message = QUESTION_TEXT[attribute]
         state.asked_attributes.add(attribute)
         return attribute, message
@@ -678,12 +639,10 @@ class Agent:
         previously_recommended: set[str] | None = None,
         positive_terms: set[str] | None = None,
         positive_attributes: dict[str, set[str]] | None = None,
-        query_embedding: np.ndarray | None = None,
     ) -> list[dict]:
         # Load or build the catalog matrix before encoding the per-turn query.
         self._ensure_embeddings()
-        if query_embedding is None:
-            query_embedding = self._encode([query], show_progress_bar=False)[0]
+        query_embedding = self._encode([query], show_progress_bar=False)[0]
         lexical_candidates = self._candidates(query)
         dense_candidates = self._dense_candidates(query_embedding)
 
@@ -728,11 +687,7 @@ class Agent:
             raise RuntimeError("reset must be called before respond")
         self._remember(state, user_message)
         query = self._retrieval_query(state)
-        # The same normalized query embedding drives both question selection
-        # and dense retrieval, avoiding a second transformer forward pass.
-        self._ensure_embeddings()
-        query_embedding = self._encode([query], show_progress_bar=False)[0]
-        attribute, message = self._question(state, query, query_embedding)
+        attribute, message = self._question(state, query)
         recommendations = self._recommend(
             query,
             top_k,
@@ -740,7 +695,6 @@ class Agent:
             state.recommended_ids,
             self._positive_constraint_terms(state),
             self._positive_attribute_values(state),
-            query_embedding,
         )
         state.recommended_ids.update(
             item["parent_asin"] for item in recommendations
