@@ -301,6 +301,27 @@ class AgentTest(unittest.TestCase):
         ])
         self.assertEqual(response["recommendations"][0]["parent_asin"], "RUNNING")
 
+    def test_full_override_removes_preference_from_initial_message(self) -> None:
+        self.agent.respond(
+            "session", "I'm looking for shoes. Leather would be good.", 1, 2
+        )
+        response = self.agent.respond(
+            "session",
+            "Actually, ignore my earlier preference. I need a blue running shoe.",
+            2,
+            2,
+        )
+
+        state = self.agent._sessions["session"]
+        query = self.agent._retrieval_query(state).lower()
+        self.assertEqual(state.messages, [
+            "I'm looking for shoes.",
+            "Actually, ignore my earlier preference. I need a blue running shoe.",
+        ])
+        self.assertNotIn("leather", query)
+        self.assertIn("shoes", query)
+        self.assertEqual(response["recommendations"][0]["parent_asin"], "RUNNING")
+
     def test_targeted_override_replaces_only_the_affected_attribute(self) -> None:
         self.agent.respond(
             "session", "I need black running shoes under $100.", 1, 2

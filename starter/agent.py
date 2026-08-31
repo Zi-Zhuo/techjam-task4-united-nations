@@ -72,6 +72,7 @@ NO_PREFERENCE_RE = re.compile(
     re.I,
 )
 ACCEPTANCE_RE = re.compile(r"\b(?:actually|instead|is fine|are fine|okay|ok|do want|would like)\b", re.I)
+INITIAL_CONTEXT_RE = re.compile(r"^.*?[.!?](?=\s|$)", re.S)
 
 # These words name an attribute; they are not values that can safely be used as
 # catalog exclusions.  For example, "no preference for brand" must not exclude
@@ -373,9 +374,17 @@ class Agent:
             # again under the replacement intent. Start diversification afresh.
             state.recommended_ids.clear()
         if is_override and FULL_RESET_RE.search(user_message):
-            # Explicit broad reset language still means all intermediate
-            # preferences should be discarded.
-            state.messages = state.messages[:1]
+            # Keep only the category-bearing opening sentence. Evaluation
+            # override sessions put the initial category first and the stale
+            # preference after it ("I'm looking for shirts. Cotton ...").
+            # Retaining the complete first message would keep ranking against
+            # the preference the customer explicitly asked us to ignore.
+            initial_context = ""
+            if state.messages:
+                match = INITIAL_CONTEXT_RE.match(state.messages[0].strip())
+                if match:
+                    initial_context = match.group(0).strip()
+            state.messages = [initial_context] if initial_context else []
             state.superseded_values.clear()
         elif is_override:
             # For a targeted correction, retire only old values belonging to
