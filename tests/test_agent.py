@@ -110,6 +110,44 @@ class AgentTest(unittest.TestCase):
         self.assertEqual(first["ask_attribute"], "feature")
         self.assertEqual(second["ask_attribute"], "material")
 
+    def test_question_policy_opens_to_other_attributes_after_turn_two(self) -> None:
+        first = self.agent.respond("session", "I need a shoe.", 1, 2)
+        second = self.agent.respond(
+            "session", "I don't have a preference for feature.", 2, 2
+        )
+        third = self.agent.respond(
+            "session", "I don't have a preference for material.", 3, 2
+        )
+
+        self.assertEqual(first["ask_attribute"], "feature")
+        self.assertEqual(second["ask_attribute"], "material")
+        self.assertNotIn(third["ask_attribute"], {"feature", "material"})
+
+    def test_explicit_metadata_constraint_is_extracted_and_prioritized(self) -> None:
+        response = self.agent.respond(
+            "session",
+            "I'm looking for shoes. A key requirement is: running comfort.",
+            1,
+            2,
+        )
+
+        state = self.agent._sessions["session"]
+        self.assertEqual(self.agent._explicit_constraints(state), ["running comfort"])
+        self.assertEqual(response["recommendations"][0]["parent_asin"], "RUNNING")
+
+    def test_multiple_explicit_constraints_are_split(self) -> None:
+        self.agent.respond(
+            "session",
+            "For that, what matters is: leather upper; formal.",
+            1,
+            2,
+        )
+
+        self.assertEqual(
+            self.agent._explicit_constraints(self.agent._sessions["session"]),
+            ["leather upper", "formal"],
+        )
+
     def test_boundary_answer_marks_attribute_as_answered(self) -> None:
         first = self.agent.respond("session", "I need a shoe.", 1, 2)
         second = self.agent.respond(

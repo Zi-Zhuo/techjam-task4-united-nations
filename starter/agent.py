@@ -79,6 +79,10 @@ SIMULATOR_CONSTRAINT_PATTERNS = (
     re.compile(r"For that, what matters is:\s*(.+)\.$", re.I),
     re.compile(r"What I need is:\s*(.+)\.$", re.I),
 )
+EXPLICIT_CONSTRAINT_RE = re.compile(
+    r"\b(?:a key requirement is|what matters is|what i need is):\s*(.+)$",
+    re.I,
+)
 CARD_SEARCH_FIELDS = ("title", "features", "details", "description", "categories", "store")
 CARD_MATERIAL_RE = re.compile(
     r"\b(cotton|polyester|nylon|leather|wool|spandex|silk|rayon|fabric)\b",
@@ -424,6 +428,30 @@ class Agent:
             }
             for attribute, pattern in ATTRIBUTE_PATTERNS.items()
         }
+
+    @staticmethod
+    def _normalize_constraint(text: str) -> str:
+        return re.sub(r"\s+", " ", text).strip(" .;,:\t\n").lower()
+
+    def _explicit_constraints(self, state: SessionState) -> list[str]:
+        """Return active evaluator constraints as normalized phrases."""
+        constraints: list[str] = []
+        inactive = {
+            self._normalize_constraint(value)
+            for values in (*state.excluded_values.values(), *state.superseded_values.values())
+            for value in values
+        }
+        for message in state.messages:
+            if NO_PREFERENCE_RE.search(message):
+                continue
+            match = EXPLICIT_CONSTRAINT_RE.search(message.strip())
+            if not match:
+                continue
+            for value in match.group(1).split(";"):
+                normalized = self._normalize_constraint(value)
+                if normalized and normalized not in inactive and normalized not in constraints:
+                    constraints.append(normalized)
+        return constraints
 
     def _refresh_preferences(self, state: SessionState) -> None:
         state.disclosed_attributes.clear()
