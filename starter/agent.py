@@ -81,6 +81,10 @@ NO_PREFERENCE_RE = re.compile(
 )
 ACCEPTANCE_RE = re.compile(r"\b(?:actually|instead|is fine|are fine|okay|ok|do want|would like)\b", re.I)
 INITIAL_CONTEXT_RE = re.compile(r"^.*?[.!?](?=\s|$)", re.S)
+EXPLICIT_CONSTRAINT_RE = re.compile(
+    r"\b(?:a key requirement is|what matters is|what i need is):\s*(.+)$",
+    re.I,
+)
 
 # These words name an attribute; they are not values that can safely be used as
 # catalog exclusions.  For example, "no preference for brand" must not exclude
@@ -172,6 +176,7 @@ class Agent:
         candidate_count: int = 250,
         dense_weight: float = 0.7,
         coverage_weight: float = 0.01,
+        exact_constraint_weight: float = 0.05,
         device: str | None = None,
         rrf_k: int = 60,
     ) -> None:
@@ -181,6 +186,8 @@ class Agent:
             raise ValueError("dense_weight must be between 0 and 1")
         if coverage_weight < 0.0:
             raise ValueError("coverage_weight must be non-negative")
+        if exact_constraint_weight < 0.0:
+            raise ValueError("exact_constraint_weight must be non-negative")
         if rrf_k < 1:
             raise ValueError("rrf_k must be positive")
 
@@ -195,11 +202,13 @@ class Agent:
         self.candidate_count = candidate_count
         self.dense_weight = dense_weight
         self.coverage_weight = coverage_weight
+        self.exact_constraint_weight = exact_constraint_weight
         self.rrf_k = rrf_k
         self.connection = sqlite3.connect(":memory:")
         self._sessions: dict[str, SessionState] = {}
         self._product_ids: list[str] = []
         self._product_texts: list[str] = []
+        self._normalized_product_texts: list[str] = []
         self._product_attributes: list[dict[str, set[str]]] = []
         self._product_embeddings: np.ndarray | None = None
         self._build_index()
@@ -219,6 +228,7 @@ class Agent:
                 self._product_ids.append(str(product["parent_asin"]))
                 product_text = _product_text(product)
                 self._product_texts.append(product_text)
+                self._normalized_product_texts.append(self._normalize_constraint(product_text))
                 # Attribute filters operate on catalog content, not on the
                 # synthetic labels added to product_text for retrieval.
                 attribute_text = " ".join(
@@ -346,6 +356,30 @@ class Agent:
             }
             for attribute, pattern in ATTRIBUTE_PATTERNS.items()
         }
+
+    @staticmethod
+    def _normalize_constraint(text: str) -> str:
+        return re.sub(r"\s+", " ", text).strip(" .;,:\t\n").lower()
+
+    def _explicit_constraints(self, state: SessionState) -> list[str]:
+        """Extract active evaluator/customer constraints as standalone phrases."""
+        constraints: list[str] = []
+        inactive = {
+            self._normalize_constraint(value)
+            for values in (*state.excluded_values.values(), *state.superseded_values.values())
+            for value in values
+        }
+        for message in state.messages:
+            if NO_PREFERENCE_RE.search(message):
+                continue
+            match = EXPLICIT_CONSTRAINT_RE.search(message.strip())
+            if not match:
+                continue
+            for value in match.group(1).split(";"):
+                normalized = self._normalize_constraint(value)
+                if normalized and normalized not in inactive and normalized not in constraints:
+                    constraints.append(normalized)
+        return constraints
 
     def _refresh_preferences(self, state: SessionState) -> None:
         state.disclosed_attributes.clear()
@@ -551,10 +585,36 @@ class Agent:
             indices = partition[np.argsort(-scores[partition], kind="stable")]
         return [(int(index), self._product_ids[int(index)]) for index in indices]
 
+    def _constraint_candidates(self, constraints: list[str]) -> list[tuple[int, str]]:
+        """Retrieve products containing all significant terms of a constraint."""
+        best_ranks: dict[int, tuple[int, str]] = {}
+        for constraint in constraints:
+            terms = list(dict.fromkeys(_terms(constraint)))[:32]
+            if not terms:
+                continue
+            expression = " AND ".join(f'"{term}"' for term in terms)
+            rows = self.connection.execute(
+                "SELECT row_index, parent_asin FROM products WHERE products MATCH ? "
+                "ORDER BY bm25(products, 0.0, 0.0, 6.0, 4.0, 2.5, 2.5, 1.5, 1.0) LIMIT ?",
+                (expression, self.candidate_count),
+            ).fetchall()
+            for rank, row in enumerate(rows, start=1):
+                row_index = int(row[0])
+                previous = best_ranks.get(row_index)
+                if previous is None or rank < previous[0]:
+                    best_ranks[row_index] = (rank, str(row[1]))
+        return [
+            (row_index, asin)
+            for row_index, (rank, asin) in sorted(
+                best_ranks.items(), key=lambda item: (item[1][0], item[0])
+            )
+        ][:self.candidate_count]
+
     def _fuse_rankings(
         self,
         lexical_candidates: list[tuple[int, str]],
         dense_candidates: list[tuple[int, str]],
+        constraint_candidates: list[tuple[int, str]] | None = None,
     ) -> dict[int, float]:
         """Fuse rankings while keeping BM25 as the precision anchor.
 
@@ -572,6 +632,10 @@ class Agent:
         for rank, (row_index, _) in enumerate(dense_candidates, start=1):
             fused_scores[row_index] = fused_scores.get(row_index, 0.0) + (
                 self.dense_weight / (self.rrf_k + rank)
+            )
+        for rank, (row_index, _) in enumerate(constraint_candidates or (), start=1):
+            fused_scores[row_index] = fused_scores.get(row_index, 0.0) + (
+                2.0 / (self.rrf_k + rank)
             )
         return fused_scores
 
@@ -635,6 +699,33 @@ class Agent:
             boosted[row_index] = score + self.coverage_weight * attribute_score
         return boosted
 
+    def _apply_explicit_constraints(
+        self,
+        fused_scores: dict[int, float],
+        constraints: list[str] | None,
+    ) -> dict[int, float]:
+        """Prefer exact metadata phrases and filter only when all are satisfied."""
+        if not constraints or not fused_scores:
+            return fused_scores
+        match_counts = {
+            row_index: sum(
+                constraint in self._normalized_product_texts[row_index]
+                for constraint in constraints
+            )
+            for row_index in fused_scores
+        }
+        complete = {
+            row_index for row_index, count in match_counts.items()
+            if count == len(constraints)
+        }
+        selected = complete or set(fused_scores)
+        denominator = float(len(constraints))
+        return {
+            row_index: fused_scores[row_index]
+            + self.exact_constraint_weight * match_counts[row_index] / denominator
+            for row_index in selected
+        }
+
     def _recommend(
         self,
         query: str,
@@ -643,15 +734,19 @@ class Agent:
         previously_recommended: set[str] | None = None,
         positive_terms: set[str] | None = None,
         positive_attributes: dict[str, set[str]] | None = None,
+        explicit_constraints: list[str] | None = None,
     ) -> list[dict]:
         # Load or build the catalog matrix before encoding the per-turn query.
         self._ensure_embeddings()
         query_embedding = self._encode([query], show_progress_bar=False)[0]
         lexical_candidates = self._candidates(query)
         dense_candidates = self._dense_candidates(query_embedding)
+        constraint_candidates = self._constraint_candidates(explicit_constraints or [])
 
         # Rank fusion avoids mixing incompatible raw BM25 and cosine scales.
-        fused_scores = self._fuse_rankings(lexical_candidates, dense_candidates)
+        fused_scores = self._fuse_rankings(
+            lexical_candidates, dense_candidates, constraint_candidates
+        )
 
         if excluded_values:
             fused_scores = {
@@ -665,6 +760,7 @@ class Agent:
             return []
 
         fused_scores = self._apply_attribute_constraints(fused_scores, positive_attributes)
+        fused_scores = self._apply_explicit_constraints(fused_scores, explicit_constraints)
         fused_scores = self._apply_constraint_coverage(fused_scores, positive_terms)
 
         ranked = sorted(fused_scores, key=lambda index: (-fused_scores[index], index))
@@ -699,6 +795,7 @@ class Agent:
             state.recommended_ids,
             self._positive_constraint_terms(state),
             self._positive_attribute_values(state),
+            self._explicit_constraints(state),
         )
         state.recommended_ids.update(
             item["parent_asin"] for item in recommendations
