@@ -87,16 +87,28 @@ class AgentTest(unittest.TestCase):
         second = self.agent.respond("session", "Leather would be good.", 2, 2)
         third = self.agent.respond("session", "I want blue for running.", 3, 2)
 
-        self.assertEqual(first["ask_attribute"], "use_case")
+        self.assertEqual(first["ask_attribute"], "feature")
         self.assertNotEqual(second["ask_attribute"], "material")
         self.assertNotIn(third["ask_attribute"], {"color", "use_case", "material"})
-        self.assertIn("planning to use", first["message"].lower())
+        self.assertIn("features", first["message"].lower())
         self.assertEqual(third["recommendations"][0]["parent_asin"], "RUNNING")
         self.assertEqual(self.agent._sessions["session"].messages, [
             "I need a shoe.",
             "Leather would be good.",
             "I want blue for running.",
         ])
+
+    def test_high_value_questions_precede_sparse_attributes(self) -> None:
+        first = self.agent.respond("session", "I need a shoe for running in size 10.", 1, 2)
+        second = self.agent.respond(
+            "session",
+            "I don't have an additional preference for feature.",
+            2,
+            2,
+        )
+
+        self.assertEqual(first["ask_attribute"], "feature")
+        self.assertEqual(second["ask_attribute"], "material")
 
     def test_boundary_answer_marks_attribute_as_answered(self) -> None:
         first = self.agent.respond("session", "I need a shoe.", 1, 2)

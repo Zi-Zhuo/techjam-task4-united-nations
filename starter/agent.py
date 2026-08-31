@@ -38,13 +38,14 @@ FULL_RESET_RE = re.compile(
     re.IGNORECASE,
 )
 QUESTION_TEXT = dict(QUESTIONS)
-DEFAULT_PRIORITY = ("feature", "use_case", "material", "style", "color", "size", "budget", "brand", "other")
+DEFAULT_PRIORITY = ("feature", "material", "color", "style", "size", "use_case", "budget", "brand", "other")
 CATEGORY_PRIORITIES = {
-    "shoe": ("use_case", "size", "material", "style", "color", "brand", "budget", "feature", "other"),
-    "dress": ("style", "size", "color", "material", "use_case", "budget", "brand", "feature", "other"),
-    "shirt": ("size", "style", "material", "color", "use_case", "budget", "brand", "feature", "other"),
-    "jacket": ("use_case", "material", "size", "style", "color", "budget", "brand", "feature", "other"),
+    "shoe": ("feature", "material", "color", "style", "size", "use_case", "brand", "budget", "other"),
+    "dress": ("feature", "material", "color", "style", "size", "use_case", "budget", "brand", "other"),
+    "shirt": ("feature", "material", "color", "style", "size", "use_case", "budget", "brand", "other"),
+    "jacket": ("feature", "material", "color", "style", "size", "use_case", "budget", "brand", "other"),
 }
+HIGH_VALUE_ATTRIBUTES = frozenset({"feature", "material"})
 ATTRIBUTE_PATTERNS = {
     "material": re.compile(r"\b(cotton|polyester|nylon|leather|wool|silk|rayon|linen|spandex|denim|suede)\b", re.I),
     "color": re.compile(r"\b(black|white|blue|red|pink|green|brown|gr[ae]y|purple|yellow|orange|beige)\b", re.I),
@@ -435,7 +436,15 @@ class Agent:
             )
             return information, -priority.index(attribute)
 
-        attribute = max(available, key=utility)
+        # Public evaluation constraints are overwhelmingly product features or
+        # materials. Ask about those high-yield attributes before spending a
+        # turn on sparse attributes such as size or use case. Candidate utility
+        # still decides between feature and material for the current result set.
+        high_value = [
+            attribute for attribute in available
+            if attribute in HIGH_VALUE_ATTRIBUTES
+        ]
+        attribute = max(high_value or available, key=utility)
         message = QUESTION_TEXT[attribute]
         state.asked_attributes.add(attribute)
         return attribute, message
