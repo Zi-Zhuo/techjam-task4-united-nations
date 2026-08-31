@@ -51,6 +51,14 @@ COVERAGE_STOPWORDS = STOPWORDS | {
     "still", "those", "use",
 }
 HIGH_VALUE_ATTRIBUTES = frozenset({"feature", "material"})
+# Explicit constraints should dominate semantic similarity.  The relative
+# weights reflect how reliably these values are represented in catalog text.
+ATTRIBUTE_WEIGHTS = {
+    "color": 1.25,
+    "material": 1.25,
+    "size": 0.75,
+    "use_case": 1.0,
+}
 ATTRIBUTE_PATTERNS = {
     "material": re.compile(r"\b(cotton|polyester|nylon|leather|wool|silk|rayon|linen|spandex|denim|suede)\b", re.I),
     "color": re.compile(r"\b(black|white|blue|red|pink|green|brown|gr[ae]y|purple|yellow|orange|beige)\b", re.I),
@@ -444,6 +452,23 @@ class Agent:
             if len(token) > 1 and token.lower() not in COVERAGE_STOPWORDS
         }
 
+    def _positive_attribute_values(self, state: SessionState) -> dict[str, set[str]]:
+        """Extract active, concrete attribute values from the conversation."""
+        values: dict[str, set[str]] = {}
+        for message in state.messages:
+            if NO_PREFERENCE_RE.search(message):
+                continue
+            positive_text = NEGATED_CLAUSE_RE.sub(" ", message)
+            for attribute, attribute_values in self._attribute_values(positive_text).items():
+                if attribute in ATTRIBUTE_WEIGHTS and attribute_values:
+                    values.setdefault(attribute, set()).update(attribute_values)
+        for attribute in list(values):
+            values[attribute] -= state.excluded_values.get(attribute, set())
+            values[attribute] -= state.superseded_values.get(attribute, set())
+            if not values[attribute]:
+                del values[attribute]
+        return values
+
     def _category_priority(self, query: str) -> tuple[str, ...]:
         lowered = query.lower()
         for category, priority in CATEGORY_PRIORITIES.items():
@@ -562,6 +587,50 @@ class Agent:
             for row_index, score in fused_scores.items()
         }
 
+    def _apply_attribute_constraints(
+        self,
+        fused_scores: dict[int, float],
+        attributes: dict[str, set[str]] | None,
+    ) -> dict[int, float]:
+        """Remove clear violations, then add a small per-attribute bonus.
+
+        A filter is applied only when at least one candidate satisfies the
+        attribute. This fail-open behavior handles sparse or inconsistent
+        catalog metadata without returning an empty recommendation list.
+        """
+        if not attributes:
+            return fused_scores
+        remaining = dict(fused_scores)
+        # Apply the most recently extracted attributes first.  If an old
+        # preference conflicts with a newer one and no product satisfies both,
+        # keep the newer constraint rather than allowing the stale one to undo
+        # the whole filter.
+        for attribute, requested in reversed(list(attributes.items())):
+            matching = {
+                row_index for row_index in remaining
+                if requested & self._product_attributes[row_index].get(attribute, set())
+            }
+            if matching:
+                remaining = {
+                    row_index: score for row_index, score in remaining.items()
+                    if row_index in matching
+                }
+        if not remaining:
+            return fused_scores
+
+        total_weight = sum(ATTRIBUTE_WEIGHTS[a] for a in attributes if a in ATTRIBUTE_WEIGHTS)
+        if total_weight <= 0:
+            return remaining
+        boosted: dict[int, float] = {}
+        for row_index, score in remaining.items():
+            attribute_score = sum(
+                ATTRIBUTE_WEIGHTS[attribute]
+                for attribute, requested in attributes.items()
+                if requested & self._product_attributes[row_index].get(attribute, set())
+            ) / total_weight
+            boosted[row_index] = score + self.coverage_weight * attribute_score
+        return boosted
+
     def _recommend(
         self,
         query: str,
@@ -569,6 +638,7 @@ class Agent:
         excluded_values: dict[str, set[str]] | None = None,
         previously_recommended: set[str] | None = None,
         positive_terms: set[str] | None = None,
+        positive_attributes: dict[str, set[str]] | None = None,
     ) -> list[dict]:
         # Load or build the catalog matrix before encoding the per-turn query.
         self._ensure_embeddings()
@@ -590,6 +660,7 @@ class Agent:
         if not fused_scores:
             return []
 
+        fused_scores = self._apply_attribute_constraints(fused_scores, positive_attributes)
         fused_scores = self._apply_constraint_coverage(fused_scores, positive_terms)
 
         ranked = sorted(fused_scores, key=lambda index: (-fused_scores[index], index))
@@ -623,6 +694,7 @@ class Agent:
             state.excluded_values,
             state.recommended_ids,
             self._positive_constraint_terms(state),
+            self._positive_attribute_values(state),
         )
         state.recommended_ids.update(
             item["parent_asin"] for item in recommendations
