@@ -182,7 +182,7 @@ SQL絞り込み中も暫定Top 10を返す方が評価上は有利です。
 1. 1〜3ターン目は feature、material、use_case を自然な会話で順番に確認する
 2. 各回答を会話履歴へ蓄積し、履歴全体をsemantic queryとして使う
 3. 各ターンでSQLite FTS5/BM25から250候補を取得する
-4. `sentence-transformers/all-MiniLM-L6-v2` の正規化埋め込みで候補をrerankする
+4. `sentence-transformers/all-MiniLM-L12-v2` の正規化埋め込みで候補をrerankする
 5. intent overrideを検出した場合は、最初の商品カテゴリだけを残して古い希望を破棄する
 
 会話中も毎ターン暫定Top 10を返します。初回実行時にモデルを取得し、50,000商品の埋め込みを
@@ -190,7 +190,7 @@ SQL絞り込み中も暫定Top 10を返す方が評価上は有利です。
 このキャッシュを再利用します。
 
 ```bash
-BERT_MODEL_NAME=sentence-transformers/all-MiniLM-L6-v2 BERT_BATCH_SIZE=128 pixi run evaluate
+BERT_MODEL_NAME=sentence-transformers/all-MiniLM-L12-v2 BERT_BATCH_SIZE=128 pixi run evaluate
 ```
 
 ローカルモデルなのでAPIトークン使用量は0です。モデル名とバッチサイズは上記の環境変数で変更できます。
@@ -253,4 +253,3 @@ TechnicalScore = 0.50 × HitRate@10 + 0.30 × MRR + 0.20 × Efficiency
 
 
 えー少しだけ変更しました。
-

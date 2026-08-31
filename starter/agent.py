@@ -178,7 +178,7 @@ class Agent:
 
         self.catalog_path = Path(catalog_path)
         self.model_name = model_name or os.environ.get(
-            "BERT_MODEL_NAME", "sentence-transformers/all-MiniLM-L6-v2"
+            "BERT_MODEL_NAME", "sentence-transformers/all-MiniLM-L12-v2"
         )
         self.device = _auto_device(device)
         print(f"[BERT] using device: {self.device}", flush=True)

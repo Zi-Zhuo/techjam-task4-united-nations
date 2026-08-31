@@ -80,14 +80,14 @@ The current starter is a conversation-first hybrid retriever:
 2. It accumulates the customer's answers as one semantic query while still returning provisional
    recommendations on every turn.
 3. SQLite FTS5/BM25 retrieves 250 candidates, and
-   `sentence-transformers/all-MiniLM-L6-v2` reranks them by normalized embedding similarity.
+   `sentence-transformers/all-MiniLM-L12-v2` reranks them by normalized embedding similarity.
 4. An explicit intent override drops intermediate preferences while retaining the initial category request.
 
 On the first evaluation, the model is downloaded and the 50,000 catalog embeddings are written to
 `.cache/bert_embeddings/`; subsequent runs reuse that cache. The model and encoding batch size are configurable:
 
 ```bash
-BERT_MODEL_NAME=sentence-transformers/all-MiniLM-L6-v2 BERT_BATCH_SIZE=128 pixi run evaluate
+BERT_MODEL_NAME=sentence-transformers/all-MiniLM-L12-v2 BERT_BATCH_SIZE=128 pixi run evaluate
 ```
 
 The default model runs locally and the baseline therefore reports zero API tokens. Model download and the
