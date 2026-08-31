@@ -224,6 +224,49 @@ class AgentTest(unittest.TestCase):
         self.assertEqual(set(scores), {0, 1})
         self.assertEqual(baseline, {0: 0.02, 1: 0.02})
 
+    def test_card_index_tracks_exact_simulator_constraints(self) -> None:
+        self.agent._remember(
+            self.agent._sessions["session"],
+            "I'm looking for Shoes. A key requirement is: leather.",
+        )
+
+        state = self.agent._sessions["session"]
+        candidates = {
+            self.agent._product_ids[index]
+            for index in self.agent._card_candidate_rows(state)
+        }
+
+        self.assertEqual(state.card_category, "shoes")
+        self.assertEqual(state.card_constraints, ["leather"])
+        self.assertEqual(candidates, {"LEATHER"})
+
+    def test_card_index_is_a_soft_rrf_signal(self) -> None:
+        baseline = {0: 0.02, 1: 0.02}
+
+        scores = self.agent._apply_card_index_boost(baseline, {1})
+
+        self.assertGreater(scores[1], scores[0])
+        self.assertEqual(scores[0], baseline[0])
+        self.assertEqual(baseline, {0: 0.02, 1: 0.02})
+
+    def test_full_override_rebuilds_card_constraints(self) -> None:
+        state = self.agent._sessions["session"]
+        self.agent._remember(
+            state,
+            "I'm looking for Shoes. A key requirement is: leather.",
+        )
+        self.agent._remember(
+            state,
+            "Actually, ignore my earlier preference. What I need is: color: blue.",
+        )
+
+        candidates = {
+            self.agent._product_ids[index]
+            for index in self.agent._card_candidate_rows(state)
+        }
+        self.assertEqual(state.card_constraints, ["color: blue"])
+        self.assertEqual(candidates, {"RUNNING"})
+
     def test_constraint_terms_ignore_negative_and_boundary_content(self) -> None:
         self.agent._remember(
             self.agent._sessions["session"],

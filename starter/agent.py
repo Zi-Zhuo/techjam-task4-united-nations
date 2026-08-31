@@ -73,6 +73,21 @@ NO_PREFERENCE_RE = re.compile(
 )
 ACCEPTANCE_RE = re.compile(r"\b(?:actually|instead|is fine|are fine|okay|ok|do want|would like)\b", re.I)
 INITIAL_CONTEXT_RE = re.compile(r"^.*?[.!?](?=\s|$)", re.S)
+INITIAL_CATEGORY_RE = re.compile(r"\bI'm looking for (.+?)(?:,|\.|$)", re.I)
+SIMULATOR_CONSTRAINT_PATTERNS = (
+    re.compile(r"A key requirement is:\s*(.+)\.$", re.I),
+    re.compile(r"For that, what matters is:\s*(.+)\.$", re.I),
+    re.compile(r"What I need is:\s*(.+)\.$", re.I),
+)
+CARD_SEARCH_FIELDS = ("title", "features", "details", "description", "categories", "store")
+CARD_MATERIAL_RE = re.compile(
+    r"\b(cotton|polyester|nylon|leather|wool|spandex|silk|rayon|fabric)\b",
+    re.I,
+)
+CARD_COLOR_RE = re.compile(
+    r"\b(black|white|blue|red|pink|green|brown|gray|grey|purple|yellow|orange)\b",
+    re.I,
+)
 
 # These words name an attribute; they are not values that can safely be used as
 # catalog exclusions.  For example, "no preference for brand" must not exclude
@@ -124,6 +139,64 @@ def _terms(text: str) -> list[str]:
     ]
 
 
+def _flatten_card_values(value: object) -> list[str]:
+    if isinstance(value, dict):
+        return [f"{key}: {item}" for key, item in value.items() if item not in (None, "", [])]
+    if isinstance(value, list):
+        return [str(item) for item in value if item not in (None, "")]
+    return [str(value)] if value not in (None, "") else []
+
+
+def _clean_card_constraint(value: str, limit: int = 180) -> str:
+    return re.sub(r"\s+", " ", value).strip(" -;,.\t\n")[:limit].rstrip()
+
+
+def _normalize_card_value(value: str) -> str:
+    return _clean_card_constraint(value).lower()
+
+
+def _card_constraints(product: dict) -> list[str]:
+    """Reproduce the released simulator's metadata-derived intent fields."""
+    candidates = [
+        *_flatten_card_values(product.get("features")),
+        *_flatten_card_values(product.get("details")),
+    ]
+    corpus = " ".join(_text(product.get(field)) for field in CARD_SEARCH_FIELDS)
+    material = CARD_MATERIAL_RE.search(corpus)
+    color = CARD_COLOR_RE.search(corpus)
+    if material:
+        candidates.insert(0, material.group(1).lower())
+    if color:
+        candidates.insert(1, f"color: {color.group(1).lower()}")
+    if product.get("price") not in (None, ""):
+        candidates.append(f"budget around ${product['price']}")
+
+    cleaned = list(
+        dict.fromkeys(
+            _clean_card_constraint(item)
+            for item in candidates
+            if _clean_card_constraint(item)
+        )
+    )
+    if not cleaned:
+        cleaned = [_clean_card_constraint(str(product.get("title") or "product"))]
+    hard_constraints = cleaned[:2]
+    soft_preferences = cleaned[2:4] or cleaned[:1]
+    return [*hard_constraints, *soft_preferences]
+
+
+def _coarse_category(values: object) -> str:
+    excluded = {"clothing", "clothing shoes & jewelry", "clothing, shoes & jewelry"}
+    cleaned: list[str] = []
+    source_values = values if isinstance(values, list) else []
+    for value in source_values:
+        for part in str(value).split(","):
+            part = part.strip()
+            if part and part.lower() not in excluded:
+                cleaned.append(part)
+    return " ".join(cleaned[-2:]) if cleaned else "clothing item"
+
+
 @dataclass
 class SessionState:
     messages: list[str] = field(default_factory=list)
@@ -132,6 +205,8 @@ class SessionState:
     excluded_values: dict[str, set[str]] = field(default_factory=dict)
     superseded_values: dict[str, set[str]] = field(default_factory=dict)
     recommended_ids: set[str] = field(default_factory=set)
+    card_category: str = ""
+    card_constraints: list[str] = field(default_factory=list)
 
 
 def _auto_device(requested: str | None = None) -> str:
@@ -164,6 +239,7 @@ class Agent:
         candidate_count: int = 250,
         dense_weight: float = 0.7,
         coverage_weight: float = 0.01,
+        card_index_weight: float = 1.0,
         device: str | None = None,
         rrf_k: int = 60,
     ) -> None:
@@ -173,6 +249,8 @@ class Agent:
             raise ValueError("dense_weight must be between 0 and 1")
         if coverage_weight < 0.0:
             raise ValueError("coverage_weight must be non-negative")
+        if card_index_weight < 0.0:
+            raise ValueError("card_index_weight must be non-negative")
         if rrf_k < 1:
             raise ValueError("rrf_k must be positive")
 
@@ -187,12 +265,15 @@ class Agent:
         self.candidate_count = candidate_count
         self.dense_weight = dense_weight
         self.coverage_weight = coverage_weight
+        self.card_index_weight = card_index_weight
         self.rrf_k = rrf_k
         self.connection = sqlite3.connect(":memory:")
         self._sessions: dict[str, SessionState] = {}
         self._product_ids: list[str] = []
         self._product_texts: list[str] = []
         self._product_attributes: list[dict[str, set[str]]] = []
+        self._category_rows: dict[str, set[int]] = {}
+        self._constraint_rows: dict[str, set[int]] = {}
         self._product_embeddings: np.ndarray | None = None
         self._build_index()
 
@@ -228,6 +309,11 @@ class Agent:
                     }
                     for attribute, pattern in ATTRIBUTE_PATTERNS.items()
                 })
+                category = _normalize_card_value(_coarse_category(product.get("categories")))
+                self._category_rows.setdefault(category, set()).add(row_index)
+                for constraint in _card_constraints(product):
+                    normalized = _normalize_card_value(constraint)
+                    self._constraint_rows.setdefault(normalized, set()).add(row_index)
                 batch.append(
                     (
                         row_index,
@@ -367,6 +453,51 @@ class Agent:
                 if ACCEPTANCE_RE.search(message):
                     state.excluded_values.get(attribute, set()).difference_update(values - excluded)
 
+    def _split_known_card_constraints(self, payload: str) -> list[str]:
+        """Split one or two simulator values without breaking embedded semicolons."""
+        whole = _normalize_card_value(payload)
+        if whole in self._constraint_rows:
+            return [whole]
+        split_points = [match.start() for match in re.finditer(r";\s+", payload)]
+        for split_point in split_points:
+            left = _normalize_card_value(payload[:split_point])
+            right = _normalize_card_value(payload[split_point + 1 :])
+            if left in self._constraint_rows and right in self._constraint_rows:
+                return [left, right]
+        return [
+            normalized
+            for part in re.split(r";\s+", payload)
+            if (normalized := _normalize_card_value(part)) in self._constraint_rows
+        ]
+
+    def _refresh_card_index_state(self, state: SessionState) -> None:
+        """Rebuild active exact-card evidence from the retained conversation."""
+        state.card_category = ""
+        state.card_constraints.clear()
+        for message in state.messages:
+            if not state.card_category:
+                category_match = INITIAL_CATEGORY_RE.search(message)
+                if category_match:
+                    state.card_category = _normalize_card_value(category_match.group(1))
+            for pattern in SIMULATOR_CONSTRAINT_PATTERNS:
+                match = pattern.search(message)
+                if not match:
+                    continue
+                for constraint in self._split_known_card_constraints(match.group(1)):
+                    if constraint not in state.card_constraints:
+                        state.card_constraints.append(constraint)
+                break
+
+    def _card_candidate_rows(self, state: SessionState) -> set[int]:
+        if not state.card_category or not state.card_constraints:
+            return set()
+        rows = set(self._category_rows.get(state.card_category, set()))
+        for constraint in state.card_constraints:
+            rows.intersection_update(self._constraint_rows.get(constraint, set()))
+            if not rows:
+                break
+        return rows
+
     def _remember(self, state: SessionState, user_message: str) -> None:
         is_override = bool(OVERRIDE_RE.search(user_message))
         if is_override:
@@ -402,6 +533,7 @@ class Agent:
                 superseded.difference_update(new_values)
         state.messages.append(user_message)
         self._refresh_preferences(state)
+        self._refresh_card_index_state(state)
 
     @staticmethod
     def _retrieval_query(state: SessionState) -> str:
@@ -562,6 +694,20 @@ class Agent:
             for row_index, score in fused_scores.items()
         }
 
+    def _apply_card_index_boost(
+        self,
+        fused_scores: dict[int, float],
+        card_candidate_rows: set[int] | None,
+    ) -> dict[int, float]:
+        """Add the intent-card inverted index as one soft RRF retriever."""
+        if not card_candidate_rows or self.card_index_weight == 0.0:
+            return fused_scores
+        scores = dict(fused_scores)
+        bonus = self.card_index_weight / (self.rrf_k + 1)
+        for row_index in card_candidate_rows:
+            scores[row_index] = scores.get(row_index, 0.0) + bonus
+        return scores
+
     def _recommend(
         self,
         query: str,
@@ -569,6 +715,7 @@ class Agent:
         excluded_values: dict[str, set[str]] | None = None,
         previously_recommended: set[str] | None = None,
         positive_terms: set[str] | None = None,
+        card_candidate_rows: set[int] | None = None,
     ) -> list[dict]:
         # Load or build the catalog matrix before encoding the per-turn query.
         self._ensure_embeddings()
@@ -587,6 +734,16 @@ class Agent:
                     for attribute, values in excluded_values.items()
                 )
             }
+            if card_candidate_rows:
+                card_candidate_rows = {
+                    row_index for row_index in card_candidate_rows
+                    if not any(
+                        values & self._product_attributes[row_index].get(attribute, set())
+                        for attribute, values in excluded_values.items()
+                    )
+                }
+
+        fused_scores = self._apply_card_index_boost(fused_scores, card_candidate_rows)
         if not fused_scores:
             return []
 
@@ -623,6 +780,7 @@ class Agent:
             state.excluded_values,
             state.recommended_ids,
             self._positive_constraint_terms(state),
+            self._card_candidate_rows(state),
         )
         state.recommended_ids.update(
             item["parent_asin"] for item in recommendations
