@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from starter.agent import Agent
+from starter.agent import DEFAULT_MODEL_NAME, Agent
 
 
 class KeywordEncoder:
@@ -87,10 +87,10 @@ class AgentTest(unittest.TestCase):
         second = self.agent.respond("session", "Leather would be good.", 2, 2)
         third = self.agent.respond("session", "I want blue for running.", 3, 2)
 
-        self.assertEqual(first["ask_attribute"], "feature")
-        self.assertNotEqual(second["ask_attribute"], "material")
+        self.assertEqual(first["ask_attribute"], "other")
+        self.assertEqual(second["ask_attribute"], "feature")
         self.assertNotIn(third["ask_attribute"], {"color", "use_case", "material"})
-        self.assertIn("features", first["message"].lower())
+        self.assertIn("what matters most", first["message"].lower())
         self.assertEqual(third["recommendations"][0]["parent_asin"], "RUNNING")
         self.assertEqual(self.agent._sessions["session"].messages, [
             "I need a shoe.",
@@ -102,26 +102,51 @@ class AgentTest(unittest.TestCase):
         first = self.agent.respond("session", "I need a shoe for running in size 10.", 1, 2)
         second = self.agent.respond(
             "session",
-            "I don't have an additional preference for feature.",
+            "I don't have an additional preference for other.",
             2,
             2,
-        )
-
-        self.assertEqual(first["ask_attribute"], "feature")
-        self.assertEqual(second["ask_attribute"], "material")
-
-    def test_question_policy_opens_to_other_attributes_after_turn_two(self) -> None:
-        first = self.agent.respond("session", "I need a shoe.", 1, 2)
-        second = self.agent.respond(
-            "session", "I don't have a preference for feature.", 2, 2
         )
         third = self.agent.respond(
-            "session", "I don't have a preference for material.", 3, 2
+            "session",
+            "I don't have an additional preference for feature.",
+            3,
+            2,
         )
 
-        self.assertEqual(first["ask_attribute"], "feature")
-        self.assertEqual(second["ask_attribute"], "material")
-        self.assertNotIn(third["ask_attribute"], {"feature", "material"})
+        self.assertEqual(first["ask_attribute"], "other")
+        self.assertEqual(second["ask_attribute"], "feature")
+        self.assertEqual(third["ask_attribute"], "material")
+
+    def test_question_policy_does_not_repeat_unhelpful_other_question(self) -> None:
+        first = self.agent.respond("session", "I need a shoe.", 1, 2)
+        second = self.agent.respond(
+            "session", "I don't have a preference for other.", 2, 2
+        )
+        third = self.agent.respond(
+            "session", "I don't have a preference for feature.", 3, 2
+        )
+
+        self.assertEqual(first["ask_attribute"], "other")
+        self.assertEqual(second["ask_attribute"], "feature")
+        self.assertEqual(third["ask_attribute"], "material")
+
+    def test_question_policy_allows_one_more_other_when_evidence_is_weak(self) -> None:
+        state = self.agent._sessions["session"]
+        state.messages = ["For that, what matters is: leather."]
+        state.card_constraints = ["leather"]
+        state.other_ask_count = 1
+        state.last_ask_attribute = "other"
+
+        attribute, _ = self.agent._question(
+            state,
+            "leather shoes",
+            2,
+            {0, 1},
+            "medium",
+        )
+
+        self.assertEqual(attribute, "other")
+        self.assertEqual(state.other_ask_count, 2)
 
     def test_explicit_metadata_constraint_is_extracted_and_prioritized(self) -> None:
         response = self.agent.respond(
@@ -305,6 +330,71 @@ class AgentTest(unittest.TestCase):
         self.assertEqual(state.card_constraints, ["color: blue"])
         self.assertEqual(candidates, {"RUNNING"})
 
+    def test_full_override_preserves_later_structured_evidence(self) -> None:
+        state = self.agent._sessions["session"]
+        self.agent._remember(
+            state,
+            "I'm looking for Shoes. leather upper",
+        )
+        self.agent._remember(
+            state,
+            "For that, what matters is: color: blue; running comfort.",
+        )
+        self.agent._remember(
+            state,
+            "Actually, ignore my earlier preference. What I need is: running comfort.",
+        )
+
+        query = self.agent._retrieval_query(state).lower()
+        self.assertNotIn("leather upper", query)
+        self.assertIn("color: blue", query)
+        self.assertEqual(state.card_constraints, ["color: blue", "running comfort"])
+        self.assertEqual(
+            {self.agent._product_ids[index] for index in self.agent._card_candidate_rows(state)},
+            {"RUNNING"},
+        )
+
+    def test_full_override_removes_old_value_but_keeps_sibling(self) -> None:
+        state = self.agent._sessions["session"]
+        self.agent._remember(state, "I'm looking for Shoes. color: blue")
+        self.agent._remember(
+            state,
+            "For that, what matters is: color: blue; running comfort.",
+        )
+        self.agent._remember(
+            state,
+            "Actually, ignore my earlier preference. What I need is: color: blue.",
+        )
+
+        self.assertEqual(
+            state.messages[1],
+            "For that, what matters is: running comfort.",
+        )
+        self.assertEqual(state.card_constraints, ["running comfort", "color: blue"])
+
+    def test_consecutive_full_overrides_replace_all_compound_values(self) -> None:
+        state = self.agent._sessions["session"]
+        self.agent._remember(state, "I'm looking for Shoes. color: blue")
+        self.agent._remember(
+            state,
+            "Actually, ignore my earlier preference. "
+            "What I need is: running comfort; leather.",
+        )
+        self.assertEqual(
+            state.override_preference_values,
+            ["running comfort", "leather"],
+        )
+
+        self.agent._remember(
+            state,
+            "Actually, ignore my earlier preference. What I need is: leather upper.",
+        )
+
+        query = self.agent._retrieval_query(state).lower()
+        self.assertNotIn("running comfort", query)
+        self.assertEqual(state.override_preference_values, ["leather upper"])
+        self.assertEqual(state.card_constraints, ["leather upper"])
+
     def test_constraint_terms_ignore_negative_and_boundary_content(self) -> None:
         self.agent._remember(
             self.agent._sessions["session"],
@@ -330,6 +420,114 @@ class AgentTest(unittest.TestCase):
         scores = self.agent._apply_constraint_coverage(baseline, {"running"})
 
         self.assertIs(scores, baseline)
+
+    def test_strong_exact_evidence_short_circuits_encoder(self) -> None:
+        response = self.agent.respond(
+            "session",
+            "I'm looking for Shoes. A key requirement is: color: blue.",
+            1,
+            10,
+        )
+
+        self.assertEqual(
+            [item["parent_asin"] for item in response["recommendations"]],
+            ["RUNNING"],
+        )
+        self.assertEqual(self.agent.encoder.encoded_batches, [])
+
+    def test_dynamic_result_count_is_narrow_then_widens_at_deadline(self) -> None:
+        state = self.agent._sessions["session"]
+
+        self.assertEqual(
+            self.agent._recommendation_count(state, set(), "weak", 1, 10),
+            10,
+        )
+        state.metadata_protocol_confident = True
+        self.assertEqual(
+            self.agent._recommendation_count(state, set(), "weak", 1, 10),
+            2,
+        )
+        self.assertEqual(
+            self.agent._recommendation_count(state, {1}, "strong", 2, 10),
+            1,
+        )
+        self.assertEqual(
+            self.agent._recommendation_count(state, {0, 1}, "strong", 2, 10),
+            2,
+        )
+        self.assertEqual(
+            self.agent._recommendation_count(state, set(), "weak", 10, 10),
+            10,
+        )
+
+    def test_deadline_policy_covers_fifty_strong_candidates(self) -> None:
+        state = self.agent._sessions["session"]
+        state.card_constraints = ["first", "second"]
+        state.metadata_protocol_confident = True
+        self.agent._product_ids = [f"P{index}" for index in range(50)]
+        rows = set(range(50))
+
+        for turn in range(1, 11):
+            count = self.agent._recommendation_count(
+                state, rows, "strong", turn, 10
+            )
+            unseen = [
+                row_index
+                for row_index in sorted(rows)
+                if self.agent._product_ids[row_index] not in state.recommended_ids
+            ]
+            state.recommended_ids.update(
+                self.agent._product_ids[row_index] for row_index in unseen[:count]
+            )
+
+        self.assertEqual(len(state.recommended_ids), 50)
+
+    def test_confidence_is_computed_before_exclusion_filtering(self) -> None:
+        state = self.agent._sessions["session"]
+        state.card_constraints = ["one"]
+        state.metadata_protocol_confident = True
+
+        raw_level = self.agent._card_evidence_level(state, set(range(100)))
+        filtered_rows = {0, 1}
+
+        self.assertEqual(raw_level, "medium")
+        self.assertEqual(len(filtered_rows), 2)
+
+    def test_strong_shortcut_requires_enough_unseen_exact_rows(self) -> None:
+        self.agent._sessions["session"].recommended_ids.add("LEATHER")
+
+        recommendations = self.agent._recommend(
+            "shoes",
+            2,
+            previously_recommended={"LEATHER"},
+            card_candidate_rows={0, 1},
+            card_constraints=["shared", "evidence"],
+            card_category="shoes",
+            card_evidence_level="strong",
+        )
+
+        self.assertTrue(self.agent.encoder.encoded_batches)
+        self.assertEqual(recommendations[0]["parent_asin"], "RUNNING")
+
+    def test_popularity_prior_is_category_scoped(self) -> None:
+        self.agent._popularity_percentiles = [0.1, 1.0]
+        baseline = {0: 0.02, 1: 0.02}
+
+        scores = self.agent._apply_popularity_prior(baseline, "shoes")
+        unchanged = self.agent._apply_popularity_prior(baseline, "unknown")
+
+        self.assertGreater(scores[1], scores[0])
+        self.assertIs(unchanged, baseline)
+        self.assertEqual(baseline, {0: 0.02, 1: 0.02})
+
+    def test_dense_retrieval_rejects_embedding_dimension_mismatch(self) -> None:
+        self.agent._product_embeddings = np.zeros((2, 3), dtype=np.float32)
+
+        with self.assertRaisesRegex(RuntimeError, "embedding dimension"):
+            self.agent._dense_candidates(np.zeros(4, dtype=np.float32))
+
+        with self.assertRaisesRegex(RuntimeError, "one-dimensional"):
+            self.agent._dense_candidates(np.zeros((1, 3), dtype=np.float32))
 
     def test_recommendations_diversify_across_turns(self) -> None:
         first = self.agent.respond("session", "I need a shoe.", 1, 1)
@@ -433,6 +631,16 @@ class AgentTest(unittest.TestCase):
         forced = Agent(self.catalog_path, encoder=KeywordEncoder(), cache_dir=None, device="cpu")
         self.assertEqual(forced.device, "cpu")
         forced.connection.close()
+
+    def test_default_model_matches_bundled_l6_artifacts(self) -> None:
+        self.assertEqual(
+            self.agent.model_name,
+            DEFAULT_MODEL_NAME,
+        )
+        self.assertEqual(
+            DEFAULT_MODEL_NAME,
+            "sentence-transformers/all-MiniLM-L6-v2",
+        )
 
     def test_catalog_embeddings_are_reused_from_cache(self) -> None:
         cache_dir = Path(self.temporary_directory.name) / "cache"

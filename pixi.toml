@@ -29,3 +29,5 @@ validate-data = "python scripts/data.py validate"
 test = "python -m unittest discover -s tests -v"
 check = { depends-on = ["test", "validate-data"] }
 evaluate = { cmd = "python -m evaluator.local_evaluator", depends-on = ["validate-data"] }
+runtime-check = "python -m scripts.runtime_check"
+evaluate-offline-cpu = { cmd = "python -m evaluator.local_evaluator", depends-on = ["validate-data"], env = { BERT_DEVICE = "cpu", HF_HUB_OFFLINE = "1", TRANSFORMERS_OFFLINE = "1" } }

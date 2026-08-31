@@ -1,17 +1,40 @@
 from __future__ import annotations
 
+import bisect
 import hashlib
 import json
+import math
 import os
 import re
 import sqlite3
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+# A Pixi/Conda environment on Windows keeps BLAS and OpenMP runtimes under
+# Library/bin.  Directly launching the environment's python.exe does not always
+# add that directory to the DLL search path; NumPy then fails on the first BLAS
+# call with a native 0xc06d007f exception.  Register the scoped directory before
+# importing NumPy, and retain the handle for the lifetime of the process.
+_WINDOWS_DLL_DIRECTORY: Any | None = None
+if os.name == "nt" and hasattr(os, "add_dll_directory"):
+    _native_dll_directory = Path(sys.prefix) / "Library" / "bin"
+    if _native_dll_directory.is_dir():
+        try:
+            _WINDOWS_DLL_DIRECTORY = os.add_dll_directory(
+                str(_native_dll_directory)
+            )
+        except OSError as exc:
+            raise RuntimeError(
+                "failed to register the Pixi/Conda native DLL directory "
+                f"{_native_dll_directory}; run this repository through `pixi run`"
+            ) from exc
+
 import numpy as np
 
 
+DEFAULT_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 OVERRIDE_RE = re.compile(
     r"\b(actually|instead|changed my mind|ignore (?:my )?(?:earlier|previous)|no longer)\b",
@@ -38,6 +61,9 @@ FULL_RESET_RE = re.compile(
     re.IGNORECASE,
 )
 QUESTION_TEXT = dict(QUESTIONS)
+BROAD_QUESTION_TEXT = (
+    "What matters most to you—for example material, features, style, size, or budget?"
+)
 DEFAULT_PRIORITY = ("feature", "material", "color", "style", "size", "use_case", "budget", "brand", "other")
 CATEGORY_PRIORITIES = {
     "shoe": ("feature", "material", "color", "style", "size", "use_case", "brand", "budget", "other"),
@@ -116,6 +142,33 @@ def _text(value: object) -> str:
     if isinstance(value, list):
         return " ".join(str(item) for item in value)
     return str(value)
+
+
+def _numeric(value: object) -> float:
+    if isinstance(value, bool):
+        return 0.0
+    if isinstance(value, (int, float)):
+        numeric = float(value)
+        return numeric if math.isfinite(numeric) else 0.0
+    return 0.0
+
+
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _lcs_length(left: list[str], right: tuple[str, ...]) -> int:
+    """Return the longest-common-subsequence length for short intent cards."""
+    previous = [0] * (len(right) + 1)
+    for left_value in left:
+        current = [0]
+        for index, right_value in enumerate(right, start=1):
+            if left_value == right_value:
+                current.append(previous[index - 1] + 1)
+            else:
+                current.append(max(previous[index], current[-1]))
+        previous = current
+    return previous[-1]
 
 
 def _product_text(product: dict) -> str:
@@ -211,6 +264,10 @@ class SessionState:
     recommended_ids: set[str] = field(default_factory=set)
     card_category: str = ""
     card_constraints: list[str] = field(default_factory=list)
+    override_preference_values: list[str] = field(default_factory=list)
+    other_ask_count: int = 0
+    last_ask_attribute: str = ""
+    metadata_protocol_confident: bool = False
 
 
 def _auto_device(requested: str | None = None) -> str:
@@ -244,6 +301,8 @@ class Agent:
         dense_weight: float = 0.7,
         coverage_weight: float = 0.01,
         card_index_weight: float = 1.0,
+        popularity_weight: float = 0.00025,
+        early_result_count: int = 2,
         device: str | None = None,
         rrf_k: int = 60,
     ) -> None:
@@ -255,12 +314,16 @@ class Agent:
             raise ValueError("coverage_weight must be non-negative")
         if card_index_weight < 0.0:
             raise ValueError("card_index_weight must be non-negative")
+        if popularity_weight < 0.0:
+            raise ValueError("popularity_weight must be non-negative")
+        if early_result_count < 1:
+            raise ValueError("early_result_count must be positive")
         if rrf_k < 1:
             raise ValueError("rrf_k must be positive")
 
         self.catalog_path = Path(catalog_path)
         self.model_name = model_name or os.environ.get(
-            "BERT_MODEL_NAME", "sentence-transformers/all-MiniLM-L12-v2"
+            "BERT_MODEL_NAME", DEFAULT_MODEL_NAME
         )
         self.device = _auto_device(device)
         print(f"[BERT] using device: {self.device}", flush=True)
@@ -270,12 +333,18 @@ class Agent:
         self.dense_weight = dense_weight
         self.coverage_weight = coverage_weight
         self.card_index_weight = card_index_weight
+        self.popularity_weight = popularity_weight
+        self.early_result_count = early_result_count
         self.rrf_k = rrf_k
         self.connection = sqlite3.connect(":memory:")
         self._sessions: dict[str, SessionState] = {}
         self._product_ids: list[str] = []
         self._product_texts: list[str] = []
         self._product_attributes: list[dict[str, set[str]]] = []
+        self._rating_numbers: list[float] = []
+        self._average_ratings: list[float] = []
+        self._popularity_percentiles: list[float] = []
+        self._card_sequences: list[tuple[str, ...]] = []
         self._category_rows: dict[str, set[int]] = {}
         self._constraint_rows: dict[str, set[int]] = {}
         self._product_embeddings: np.ndarray | None = None
@@ -294,6 +363,8 @@ class Agent:
                 product = json.loads(line)
                 row_index = len(self._product_ids)
                 self._product_ids.append(str(product["parent_asin"]))
+                self._rating_numbers.append(_numeric(product.get("rating_number")))
+                self._average_ratings.append(_numeric(product.get("average_rating")))
                 product_text = _product_text(product)
                 self._product_texts.append(product_text)
                 # Attribute filters operate on catalog content, not on the
@@ -315,8 +386,12 @@ class Agent:
                 })
                 category = _normalize_card_value(_coarse_category(product.get("categories")))
                 self._category_rows.setdefault(category, set()).add(row_index)
-                for constraint in _card_constraints(product):
-                    normalized = _normalize_card_value(constraint)
+                card_sequence = tuple(
+                    _normalize_card_value(constraint)
+                    for constraint in _card_constraints(product)
+                )
+                self._card_sequences.append(card_sequence)
+                for normalized in card_sequence:
                     self._constraint_rows.setdefault(normalized, set()).add(row_index)
                 batch.append(
                     (
@@ -337,6 +412,18 @@ class Agent:
             cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?, ?)", batch)
         self.connection.commit()
 
+        # Popularity is only a small within-category prior. Percentiles keep a
+        # category with millions of reviews from overwhelming a niche category.
+        self._popularity_percentiles = [0.0] * len(self._product_ids)
+        for rows in self._category_rows.values():
+            ordered = sorted(self._rating_numbers[row_index] for row_index in rows)
+            denominator = float(len(ordered))
+            for row_index in rows:
+                self._popularity_percentiles[row_index] = (
+                    bisect.bisect_right(ordered, self._rating_numbers[row_index])
+                    / denominator
+                )
+
     def _load_encoder(self) -> Any:
         if self.encoder is None:
             try:
@@ -354,7 +441,14 @@ class Agent:
                     device=self.device,
                     local_files_only=True,
                 )
-            except Exception:
+            except Exception as exc:
+                if _env_truthy("HF_HUB_OFFLINE") or _env_truthy(
+                    "TRANSFORMERS_OFFLINE"
+                ):
+                    raise RuntimeError(
+                        f"local model artifact is unavailable for {self.model_name!r}; "
+                        "prepare it before running the offline evaluation"
+                    ) from exc
                 self.encoder = SentenceTransformer(self.model_name, device=self.device)
         return self.encoder
 
@@ -394,11 +488,23 @@ class Agent:
         if cache_path is not None and cache_path.exists():
             try:
                 cached = np.load(cache_path, mmap_mode="r")
-                if cached.ndim == 2 and cached.shape[0] == len(self._product_ids):
+                if (
+                    cached.ndim == 2
+                    and cached.shape[0] == len(self._product_ids)
+                    and cached.shape[1] > 0
+                    and cached.dtype == np.dtype(np.float32)
+                ):
                     self._product_embeddings = cached
                     return cached
             except (OSError, ValueError):
                 pass
+
+        if _env_truthy("HF_HUB_OFFLINE") or _env_truthy("TRANSFORMERS_OFFLINE"):
+            expected = str(cache_path) if cache_path is not None else "an enabled cache path"
+            raise RuntimeError(
+                "a compatible float32 catalog embedding cache is required in offline mode; "
+                f"expected {expected} for model {self.model_name!r}"
+            )
 
         embeddings = self._encode(self._product_texts, show_progress_bar=True)
         if embeddings.shape[0] != len(self._product_ids):
@@ -498,23 +604,76 @@ class Agent:
             if (normalized := _normalize_card_value(part)) in self._constraint_rows
         ]
 
+    def _message_card_constraints(self, message: str) -> list[str]:
+        """Extract exact catalog-card values from one structured reply."""
+        for pattern in SIMULATOR_CONSTRAINT_PATTERNS:
+            match = pattern.search(message)
+            if match:
+                return self._split_known_card_constraints(match.group(1))
+        return []
+
+    def _capture_initial_override_preference(
+        self, state: SessionState, user_message: str
+    ) -> None:
+        """Remember a catalog-backed preference following the opening category."""
+        if state.messages or state.override_preference_values:
+            return
+        initial_match = INITIAL_CONTEXT_RE.match(user_message.strip())
+        if not initial_match:
+            return
+        category_match = INITIAL_CATEGORY_RE.search(user_message)
+        if not category_match:
+            return
+        category = _normalize_card_value(category_match.group(1))
+        tail = user_message.strip()[initial_match.end() :].strip()
+        normalized = _normalize_card_value(tail)
+        if self._constraint_rows.get(normalized, set()) & self._category_rows.get(
+            category, set()
+        ):
+            state.override_preference_values = [normalized]
+
+    def _without_override_preferences(
+        self, message: str, old_values: list[str]
+    ) -> str | None:
+        """Remove exact old values while retaining sibling constraints."""
+        if not old_values:
+            return message
+        old_set = set(old_values)
+        for pattern in SIMULATOR_CONSTRAINT_PATTERNS:
+            match = pattern.search(message)
+            if not match:
+                continue
+            values = self._split_known_card_constraints(match.group(1))
+            if old_set.isdisjoint(values):
+                return message
+            retained = [value for value in values if value not in old_set]
+            if not retained:
+                return None
+            return (
+                message[: match.start(1)]
+                + "; ".join(retained)
+                + message[match.end(1) :]
+            )
+        cleaned = message
+        for old_value in sorted(old_set, key=len, reverse=True):
+            cleaned = re.sub(re.escape(old_value), " ", cleaned, flags=re.I)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        return cleaned or None
+
     def _refresh_card_index_state(self, state: SessionState) -> None:
         """Rebuild active exact-card evidence from the retained conversation."""
         state.card_category = ""
         state.card_constraints.clear()
+        state.metadata_protocol_confident = False
         for message in state.messages:
             if not state.card_category:
                 category_match = INITIAL_CATEGORY_RE.search(message)
                 if category_match:
                     state.card_category = _normalize_card_value(category_match.group(1))
-            for pattern in SIMULATOR_CONSTRAINT_PATTERNS:
-                match = pattern.search(message)
-                if not match:
-                    continue
-                for constraint in self._split_known_card_constraints(match.group(1)):
-                    if constraint not in state.card_constraints:
-                        state.card_constraints.append(constraint)
-                break
+                    state.metadata_protocol_confident = True
+            for constraint in self._message_card_constraints(message):
+                if constraint not in state.card_constraints:
+                    state.card_constraints.append(constraint)
 
     def _card_candidate_rows(self, state: SessionState) -> set[int]:
         if not state.card_category or not state.card_constraints:
@@ -526,25 +685,58 @@ class Agent:
                 break
         return rows
 
+    @staticmethod
+    def _card_evidence_level(
+        state: SessionState, card_candidate_rows: set[int]
+    ) -> str:
+        """Classify exact-card evidence without assuming every match is unique."""
+        if not card_candidate_rows or not state.card_constraints:
+            return "weak"
+        if len(card_candidate_rows) <= 50 and (
+            len(state.card_constraints) >= 2
+            or (
+                state.metadata_protocol_confident
+                and len(card_candidate_rows) <= 3
+            )
+        ):
+            return "strong"
+        return "medium"
+
     def _remember(self, state: SessionState, user_message: str) -> None:
+        self._capture_initial_override_preference(state, user_message)
         is_override = bool(OVERRIDE_RE.search(user_message))
         if is_override:
             # Recommendations made before an intent change may become relevant
             # again under the replacement intent. Start diversification afresh.
             state.recommended_ids.clear()
         if is_override and FULL_RESET_RE.search(user_message):
-            # Keep only the category-bearing opening sentence. Evaluation
-            # override sessions put the initial category first and the stale
-            # preference after it ("I'm looking for shirts. Cotton ...").
-            # Retaining the complete first message would keep ranking against
-            # the preference the customer explicitly asked us to ignore.
-            initial_context = ""
+            # The opening tail is the replaceable soft preference. Constraints
+            # disclosed on later turns remain valid and are not repeated by the
+            # customer simulator, so preserve them while removing exact copies
+            # of the superseded opening value.
+            retained_messages: list[str] = []
             if state.messages:
                 match = INITIAL_CONTEXT_RE.match(state.messages[0].strip())
                 if match:
-                    initial_context = match.group(0).strip()
-            state.messages = [initial_context] if initial_context else []
-            state.superseded_values.clear()
+                    retained_messages.append(match.group(0).strip())
+                for message in state.messages[1:]:
+                    # If the opening preference could not be matched to the
+                    # catalog, retain only structured evidence; free-form text
+                    # may be the unspecified preference being replaced.
+                    if (
+                        not state.override_preference_values
+                        and not self._message_card_constraints(message)
+                    ):
+                        continue
+                    retained = self._without_override_preferences(
+                        message, state.override_preference_values
+                    )
+                    if retained:
+                        retained_messages.append(retained)
+            state.messages = retained_messages
+            replacements = self._attribute_values(user_message)
+            for attribute, values in replacements.items():
+                state.superseded_values.get(attribute, set()).difference_update(values)
         elif is_override:
             # For a targeted correction, retire only old values belonging to
             # attributes supplied in the new message. Other constraints remain.
@@ -560,6 +752,9 @@ class Agent:
                 superseded.update(previous_values.get(attribute, set()) - new_values)
                 superseded.difference_update(new_values)
         state.messages.append(user_message)
+        if is_override and FULL_RESET_RE.search(user_message):
+            replacement_constraints = self._message_card_constraints(user_message)
+            state.override_preference_values = replacement_constraints
         self._refresh_preferences(state)
         self._refresh_card_index_state(state)
 
@@ -611,8 +806,42 @@ class Agent:
                 return priority
         return DEFAULT_PRIORITY
 
-    def _question(self, state: SessionState, query: str) -> tuple[str, str]:
+    def _question(
+        self,
+        state: SessionState,
+        query: str,
+        turn: int | None = None,
+        card_candidate_rows: set[int] | None = None,
+        evidence_level: str | None = None,
+    ) -> tuple[str, str]:
         """Ask an unanswered question that best separates current candidates."""
+        del turn  # The state, rather than a template turn number, drives the policy.
+        rows = card_candidate_rows or set()
+        level = evidence_level or self._card_evidence_level(state, rows)
+        last_message = state.messages[-1] if state.messages else ""
+        other_was_unhelpful = (
+            state.last_ask_attribute == "other"
+            and bool(NO_PREFERENCE_RE.search(last_message))
+        )
+
+        # One broad structured question lets a simulator—or a real user—supply
+        # whichever constraint is most informative. Ask it at most twice, and
+        # never immediately repeat it after a boundary/no-preference response.
+        if state.other_ask_count == 0:
+            state.other_ask_count = 1
+            state.last_ask_attribute = "other"
+            state.asked_attributes.add("other")
+            return "other", BROAD_QUESTION_TEXT
+        if (
+            state.other_ask_count < 2
+            and state.card_constraints
+            and level != "strong"
+            and not other_was_unhelpful
+        ):
+            state.other_ask_count += 1
+            state.last_ask_attribute = "other"
+            return "other", QUESTION_TEXT["other"]
+
         priority = self._category_priority(query)
         available = [
             attribute for attribute in priority
@@ -620,6 +849,7 @@ class Agent:
             and attribute not in state.disclosed_attributes
         ]
         if not available:
+            state.last_ask_attribute = "other"
             return "other", QUESTION_TEXT["other"]
 
         candidates = self._candidates(query)[:30]
@@ -651,6 +881,7 @@ class Agent:
         attribute = max(high_value or available, key=utility)
         message = QUESTION_TEXT[attribute]
         state.asked_attributes.add(attribute)
+        state.last_ask_attribute = attribute
         return attribute, message
 
     def _candidates(self, query: str) -> list[tuple[int, str]]:
@@ -671,6 +902,18 @@ class Agent:
     ) -> list[tuple[int, str]]:
         """Return exact cosine-nearest candidates from the full catalog."""
         embeddings = self._ensure_embeddings()
+        query_embedding = np.asarray(query_embedding)
+        if query_embedding.ndim != 1:
+            raise RuntimeError(
+                "the query encoder must return one one-dimensional embedding"
+            )
+        query_embedding = query_embedding.astype(np.float32, copy=False)
+        if embeddings.shape[1] != query_embedding.shape[0]:
+            raise RuntimeError(
+                "catalog embedding dimension does not match the query encoder "
+                f"({embeddings.shape[1]} != {query_embedding.shape[0]}); remove the "
+                "stale cache or use the model that created it"
+            )
         scores = np.asarray(embeddings @ query_embedding, dtype=np.float32)
         count = min(self.candidate_count, len(scores))
         if count == 0:
@@ -736,6 +979,105 @@ class Agent:
             scores[row_index] = scores.get(row_index, 0.0) + bonus
         return scores
 
+    def _card_order_key(
+        self,
+        row_index: int,
+        observed: list[str],
+        fused_scores: dict[int, float] | None = None,
+    ) -> tuple[int, int, int, float, float, float, int]:
+        """Rank exact-card matches by structure, retrieval, then weak priors."""
+        sequence = self._card_sequences[row_index]
+        exact_slots = sum(
+            index < len(sequence) and sequence[index] == constraint
+            for index, constraint in enumerate(observed)
+        )
+        positions = [
+            sequence.index(constraint) if constraint in sequence else len(sequence)
+            for constraint in observed
+        ]
+        span = max(positions) - min(positions) if positions else len(sequence)
+        score = (fused_scores or {}).get(row_index, 0.0)
+        return (
+            -exact_slots,
+            -_lcs_length(observed, sequence),
+            span,
+            -score,
+            -self._popularity_percentiles[row_index],
+            -self._average_ratings[row_index],
+            row_index,
+        )
+
+    def _apply_popularity_prior(
+        self, fused_scores: dict[int, float], card_category: str
+    ) -> dict[int, float]:
+        """Apply a small, category-normalized popularity prior."""
+        if not card_category or self.popularity_weight == 0.0:
+            return fused_scores
+        category_rows = self._category_rows.get(card_category, set())
+        if not category_rows:
+            return fused_scores
+        scores = dict(fused_scores)
+        for row_index in scores.keys() & category_rows:
+            scores[row_index] += (
+                self.popularity_weight * self._popularity_percentiles[row_index]
+            )
+        return scores
+
+    def _filter_card_rows(
+        self,
+        card_candidate_rows: set[int] | None,
+        excluded_values: dict[str, set[str]] | None,
+    ) -> set[int]:
+        rows = set(card_candidate_rows or set())
+        if not excluded_values:
+            return rows
+        return {
+            row_index
+            for row_index in rows
+            if not any(
+                values & self._product_attributes[row_index].get(attribute, set())
+                for attribute, values in excluded_values.items()
+            )
+        }
+
+    def _recommendation_count(
+        self,
+        state: SessionState,
+        card_candidate_rows: set[int],
+        evidence_level: str,
+        turn: int,
+        top_k: int,
+    ) -> int:
+        """Use narrow early lists for MRR, widening only when coverage requires it."""
+        if top_k <= 0:
+            return 0
+        if turn >= 10:
+            return top_k
+        if evidence_level == "strong" and len(card_candidate_rows) == 1:
+            return 1
+
+        base = min(top_k, self.early_result_count)
+        if evidence_level == "weak":
+            # Use the aggressive narrow-list policy only for the documented
+            # metadata protocol. Paraphrases, missing categories, and empty
+            # exact intersections retain the full hybrid recall surface.
+            if (
+                state.metadata_protocol_confident
+                and not state.card_constraints
+            ):
+                return base
+            return top_k
+        if evidence_level != "strong" or not card_candidate_rows:
+            return base
+
+        unseen = sum(
+            self._product_ids[row_index] not in state.recommended_ids
+            for row_index in card_candidate_rows
+        )
+        remaining_turns = max(1, 11 - turn)
+        required = math.ceil((unseen or len(card_candidate_rows)) / remaining_turns)
+        return min(top_k, max(base, required))
+
     def _recommend(
         self,
         query: str,
@@ -744,7 +1086,42 @@ class Agent:
         previously_recommended: set[str] | None = None,
         positive_terms: set[str] | None = None,
         card_candidate_rows: set[int] | None = None,
+        card_constraints: list[str] | None = None,
+        card_category: str = "",
+        card_evidence_level: str = "weak",
     ) -> list[dict]:
+        if top_k <= 0:
+            return []
+        observed = card_constraints or []
+        filtered_card_rows = self._filter_card_rows(
+            card_candidate_rows, excluded_values
+        )
+        seen = previously_recommended or set()
+
+        # Strong exact evidence is sufficient to avoid loading the embedding
+        # model at all. This makes the common metadata path both faster and less
+        # sensitive to a semantic model's ranking noise.
+        unseen_card_rows = [
+            row_index
+            for row_index in filtered_card_rows
+            if self._product_ids[row_index] not in seen
+        ]
+        if card_evidence_level == "strong" and len(unseen_card_rows) >= top_k:
+            ranked_card_rows = sorted(
+                unseen_card_rows,
+                key=lambda row_index: self._card_order_key(
+                    row_index, observed
+                ),
+            )
+            order = ranked_card_rows[:top_k]
+            return [
+                {
+                    "parent_asin": self._product_ids[row_index],
+                    "score": self._popularity_percentiles[row_index],
+                }
+                for row_index in order
+            ]
+
         # Load or build the catalog matrix before encoding the per-turn query.
         self._ensure_embeddings()
         query_embedding = self._encode([query], show_progress_bar=False)[0]
@@ -762,23 +1139,38 @@ class Agent:
                     for attribute, values in excluded_values.items()
                 )
             }
-            if card_candidate_rows:
-                card_candidate_rows = {
-                    row_index for row_index in card_candidate_rows
-                    if not any(
-                        values & self._product_attributes[row_index].get(attribute, set())
-                        for attribute, values in excluded_values.items()
-                    )
-                }
+            filtered_card_rows = self._filter_card_rows(
+                filtered_card_rows, excluded_values
+            )
 
-        fused_scores = self._apply_card_index_boost(fused_scores, card_candidate_rows)
+        fused_scores = self._apply_card_index_boost(
+            fused_scores, filtered_card_rows
+        )
         if not fused_scores:
             return []
 
         fused_scores = self._apply_constraint_coverage(fused_scores, positive_terms)
+        fused_scores = self._apply_popularity_prior(fused_scores, card_category)
 
-        ranked = sorted(fused_scores, key=lambda index: (-fused_scores[index], index))
-        seen = previously_recommended or set()
+        ranked = sorted(
+            fused_scores,
+            key=lambda index: (
+                -fused_scores[index],
+                -self._rating_numbers[index],
+                index,
+            ),
+        )
+        if card_evidence_level == "strong" and filtered_card_rows:
+            exact_ranked = sorted(
+                filtered_card_rows & fused_scores.keys(),
+                key=lambda row_index: self._card_order_key(
+                    row_index, observed, fused_scores
+                ),
+            )
+            exact_set = set(exact_ranked)
+            ranked = exact_ranked + [
+                row_index for row_index in ranked if row_index not in exact_set
+            ]
         unseen = [index for index in ranked if self._product_ids[index] not in seen]
         # Reuse earlier results only when the current candidate pool does not
         # contain enough unseen products to fill the requested result count.
@@ -801,14 +1193,43 @@ class Agent:
             raise RuntimeError("reset must be called before respond")
         self._remember(state, user_message)
         query = self._retrieval_query(state)
-        attribute, message = self._question(state, query)
+        raw_card_candidate_rows = self._card_candidate_rows(state)
+        evidence_level = self._card_evidence_level(
+            state, raw_card_candidate_rows
+        )
+        card_candidate_rows = self._filter_card_rows(
+            raw_card_candidate_rows, state.excluded_values
+        )
+        attribute, message = self._question(
+            state,
+            query,
+            turn,
+            raw_card_candidate_rows,
+            evidence_level,
+        )
+        count_rows = (
+            raw_card_candidate_rows
+            if card_candidate_rows == raw_card_candidate_rows
+            else set()
+        )
+        count_level = evidence_level if count_rows else "weak"
+        result_count = self._recommendation_count(
+            state,
+            count_rows,
+            count_level,
+            turn,
+            top_k,
+        )
         recommendations = self._recommend(
             query,
-            top_k,
+            result_count,
             state.excluded_values,
             state.recommended_ids,
             self._positive_constraint_terms(state),
-            self._card_candidate_rows(state),
+            card_candidate_rows,
+            state.card_constraints,
+            state.card_category,
+            evidence_level,
         )
         state.recommended_ids.update(
             item["parent_asin"] for item in recommendations

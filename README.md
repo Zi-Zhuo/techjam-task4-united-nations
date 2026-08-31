@@ -62,7 +62,9 @@ Available tasks:
 | `pixi run validate-data` | Validate both the public set and downloaded catalog |
 | `pixi run test` | Run unit tests |
 | `pixi run check` | Run unit tests and validate both datasets |
+| `pixi run runtime-check` | Verify the active Python, NumPy/BLAS, Torch, and device runtime |
 | `pixi run evaluate` | Run the starter on the public set and write `results.json` |
+| `pixi run evaluate-offline-cpu` | Evaluate with CPU and Hugging Face offline mode enforced |
 
 Python 3.10–3.13 and the Sentence Transformers/PyTorch dependencies are locked through `pixi.toml`.
 
@@ -72,30 +74,44 @@ The command writes per-session results and aggregate metrics to `results.json`.
 The historical weak BM25 starter scores Hit Rate@10 `0.125`, MRR `0.068034`, and
 MTTC `9.81` on the released public set. See `docs/baseline_results.json`.
 
-## BERT hybrid baseline
+## Metadata-first hybrid strategy
 
-The current starter is a conversation-first hybrid retriever:
+The current starter combines deterministic catalog evidence with a local semantic fallback:
 
-1. It asks natural follow-up questions about feature, material, and use case during turns 1–3.
-2. It accumulates the customer's answers as one semantic query while still returning provisional
-   recommendations on every turn.
-3. SQLite FTS5/BM25 retrieves 250 candidates, and
-   `sentence-transformers/all-MiniLM-L12-v2` reranks them by normalized embedding similarity.
-4. An explicit intent override drops intermediate preferences while retaining the initial category request.
+1. It opens with one broad structured question, optionally asks it once more when evidence remains weak,
+   and then falls back to candidate-aware feature/material questions.
+2. Exact metadata constraints build a confidence-scored intent-card candidate set. Strong matches are ranked
+   first; empty or ambiguous matches always fall back to hybrid retrieval.
+3. Early turns return a narrow, diversified list for MRR. Unique strong matches return one item, while the
+   final turn widens to the full evaluator allowance for recall.
+4. A small category-normalized popularity prior breaks close ties without replacing retrieval relevance.
+5. Intent overrides remove the superseded opening preference while retaining constraints disclosed on later
+   turns. Recommendation history is reset so previously shown products can be reconsidered.
+6. SQLite FTS5/BM25 and `sentence-transformers/all-MiniLM-L6-v2` remain the semantic fallback when exact
+   evidence is unavailable. The Agent reports zero API tokens.
 
 On the first evaluation, the model is downloaded and the 50,000 catalog embeddings are written to
 `.cache/bert_embeddings/`; subsequent runs reuse that cache. The model and encoding batch size are configurable:
 
 ```bash
-BERT_MODEL_NAME=sentence-transformers/all-MiniLM-L12-v2 BERT_BATCH_SIZE=128 pixi run evaluate
+BERT_MODEL_NAME=sentence-transformers/all-MiniLM-L6-v2 BERT_BATCH_SIZE=128 pixi run evaluate
 ```
 
 The default model runs locally and the baseline therefore reports zero API tokens. Model download and the
 first embedding build require network access and may take tens of minutes on CPU; later evaluations can run
 from the local model and embedding caches.
 
+`pixi run evaluate-offline-cpu` requires both the L6 weights and the matching float32 catalog embedding cache
+to exist already; it fails instead of downloading or rebuilding missing artifacts. An embedding cache must be
+used with the exact model configuration that created it. `runtime-check` verifies the native Python/BLAS/Torch
+environment only—it does not certify that all offline model artifacts are present.
+
 The agent automatically selects CUDA when `torch.cuda.is_available()` is true and otherwise uses CPU. To
 override the selection, set `BERT_DEVICE=cuda` or `BERT_DEVICE=cpu`.
+
+Always launch repository commands through `pixi run`. On Windows, do not directly execute
+`.pixi/envs/default/python.exe`: doing so can bypass `Library/bin` activation and make NumPy fail during its
+first BLAS call. Run `pixi run runtime-check` before evaluation when changing Python or native packages.
 
 On Linux, Pixi resolves the `pytorch-gpu` package and CUDA 12 runtime (`linux-64-cuda-12`). On a machine
 with an NVIDIA driver, install the environment with `pixi install`, then verify it with:
