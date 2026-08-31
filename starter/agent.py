@@ -59,7 +59,27 @@ NEGATED_CLAUSE_RE = re.compile(
     r"\b(?:do\s+not|don't|dont|no|not|never|without|avoid|excluding|except)\b[^,.;]*",
     re.I,
 )
+NO_PREFERENCE_RE = re.compile(
+    r"\b(?:do\s+not|don't|dont|no)\s+(?:have|need|want)\b[^,.;]*\bpreference\b"
+    r"|\bno\s+(?:additional\s+)?preference\b"
+    r"|\buse\s+your\s+(?:best\s+)?judg(?:e)?ment\b",
+    re.I,
+)
 ACCEPTANCE_RE = re.compile(r"\b(?:actually|instead|is fine|are fine|okay|ok|do want|would like)\b", re.I)
+
+# These words name an attribute; they are not values that can safely be used as
+# catalog exclusions.  For example, "no preference for brand" must not exclude
+# every product whose indexed text contains the field label "brand".
+GENERIC_ATTRIBUTE_VALUES = {
+    "material": {"material"},
+    "color": {"color"},
+    "size": {"size", "width"},
+    "style": {"style", "fit"},
+    "use_case": {"use case"},
+    "budget": {"budget", "price", "under", "below", "less than", "up to"},
+    "brand": {"brand"},
+    "feature": {"feature"},
+}
 
 
 def _text(value: object) -> str:
@@ -104,6 +124,7 @@ class SessionState:
     disclosed_attributes: set[str] = field(default_factory=set)
     excluded_values: dict[str, set[str]] = field(default_factory=dict)
     superseded_values: dict[str, set[str]] = field(default_factory=dict)
+    recommended_ids: set[str] = field(default_factory=set)
 
 
 def _auto_device(requested: str | None = None) -> str:
@@ -179,8 +200,21 @@ class Agent:
                 self._product_ids.append(str(product["parent_asin"]))
                 product_text = _product_text(product)
                 self._product_texts.append(product_text)
+                # Attribute filters operate on catalog content, not on the
+                # synthetic labels added to product_text for retrieval.
+                attribute_text = " ".join(
+                    _text(product.get(field))
+                    for field in (
+                        "title", "categories", "features", "details", "store", "description"
+                    )
+                )
                 self._product_attributes.append({
-                    attribute: {match.lower() for match in pattern.findall(product_text)}
+                    attribute: {
+                        match.group(0).lower()
+                        for match in pattern.finditer(attribute_text)
+                        if match.group(0).lower()
+                        not in GENERIC_ATTRIBUTE_VALUES.get(attribute, set())
+                    }
                     for attribute, pattern in ATTRIBUTE_PATTERNS.items()
                 })
                 batch.append(
@@ -285,7 +319,12 @@ class Agent:
     @staticmethod
     def _attribute_values(text: str) -> dict[str, set[str]]:
         return {
-            attribute: {match.group(0).lower() for match in pattern.finditer(text)}
+            attribute: {
+                match.group(0).lower()
+                for match in pattern.finditer(text)
+                if match.group(0).lower()
+                not in GENERIC_ATTRIBUTE_VALUES.get(attribute, set())
+            }
             for attribute, pattern in ATTRIBUTE_PATTERNS.items()
         }
 
@@ -295,9 +334,13 @@ class Agent:
         for message in state.messages:
             all_values = self._attribute_values(message)
             negative_values: dict[str, set[str]] = {}
-            for clause in NEGATED_CLAUSE_RE.findall(message):
-                for attribute, values in self._attribute_values(clause).items():
-                    negative_values.setdefault(attribute, set()).update(values)
+            # A boundary answer communicates absence of a constraint, rather
+            # than a negative constraint. asked_attributes already prevents the
+            # agent from repeating the question.
+            if not NO_PREFERENCE_RE.search(message):
+                for clause in NEGATED_CLAUSE_RE.findall(message):
+                    for attribute, values in self._attribute_values(clause).items():
+                        negative_values.setdefault(attribute, set()).update(values)
 
             for attribute, values in all_values.items():
                 values -= state.superseded_values.get(attribute, set())
@@ -315,6 +358,10 @@ class Agent:
 
     def _remember(self, state: SessionState, user_message: str) -> None:
         is_override = bool(OVERRIDE_RE.search(user_message))
+        if is_override:
+            # Recommendations made before an intent change may become relevant
+            # again under the replacement intent. Start diversification afresh.
+            state.recommended_ids.clear()
         if is_override and FULL_RESET_RE.search(user_message):
             # Explicit broad reset language still means all intermediate
             # preferences should be discarded.
@@ -447,7 +494,11 @@ class Agent:
         return fused_scores
 
     def _recommend(
-        self, query: str, top_k: int, excluded_values: dict[str, set[str]] | None = None
+        self,
+        query: str,
+        top_k: int,
+        excluded_values: dict[str, set[str]] | None = None,
+        previously_recommended: set[str] | None = None,
     ) -> list[dict]:
         # Load or build the catalog matrix before encoding the per-turn query.
         self._ensure_embeddings()
@@ -469,7 +520,13 @@ class Agent:
         if not fused_scores:
             return []
 
-        order = sorted(fused_scores, key=lambda index: (-fused_scores[index], index))[:top_k]
+        ranked = sorted(fused_scores, key=lambda index: (-fused_scores[index], index))
+        seen = previously_recommended or set()
+        unseen = [index for index in ranked if self._product_ids[index] not in seen]
+        # Reuse earlier results only when the current candidate pool does not
+        # contain enough unseen products to fill the requested result count.
+        repeated = [index for index in ranked if self._product_ids[index] in seen]
+        order = (unseen + repeated)[:top_k]
         return [
             {"parent_asin": self._product_ids[row_index], "score": fused_scores[row_index]}
             for row_index in order
@@ -488,9 +545,18 @@ class Agent:
         self._remember(state, user_message)
         query = self._retrieval_query(state)
         attribute, message = self._question(state, query)
+        recommendations = self._recommend(
+            query,
+            top_k,
+            state.excluded_values,
+            state.recommended_ids,
+        )
+        state.recommended_ids.update(
+            item["parent_asin"] for item in recommendations
+        )
         return {
             "message": message,
             "ask_attribute": attribute,
-            "recommendations": self._recommend(query, top_k, state.excluded_values),
+            "recommendations": recommendations,
             "usage": {"prompt_tokens": 0, "completion_tokens": 0},
         }

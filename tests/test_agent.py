@@ -106,6 +106,28 @@ class AgentTest(unittest.TestCase):
 
         self.assertNotEqual(second["ask_attribute"], first["ask_attribute"])
 
+    def test_no_preference_does_not_create_a_catalog_exclusion(self) -> None:
+        response = self.agent.respond(
+            "session",
+            "I don't have an additional preference for brand.",
+            1,
+            2,
+        )
+
+        state = self.agent._sessions["session"]
+        self.assertEqual(state.excluded_values, {})
+        self.assertEqual(len(response["recommendations"]), 2)
+
+    def test_use_your_judgment_does_not_create_a_catalog_exclusion(self) -> None:
+        self.agent.respond(
+            "session",
+            "I don't have a preference for size; please use your judgment.",
+            1,
+            2,
+        )
+
+        self.assertEqual(self.agent._sessions["session"].excluded_values, {})
+
     def test_explicit_exclusion_filters_matching_products(self) -> None:
         response = self.agent.respond("session", "I want shoes but do not want blue.", 1, 2)
 
@@ -177,6 +199,44 @@ class AgentTest(unittest.TestCase):
         # candidates ranked ahead of lexical rank 1 when dense_weight was 0.7.
         self.assertEqual(order[0], 0)
         self.assertGreater(scores[0], scores[1])
+
+    def test_recommendations_diversify_across_turns(self) -> None:
+        first = self.agent.respond("session", "I need a shoe.", 1, 1)
+        second = self.agent.respond("session", "I am still considering shoes.", 2, 1)
+
+        first_id = first["recommendations"][0]["parent_asin"]
+        second_id = second["recommendations"][0]["parent_asin"]
+        self.assertNotEqual(second_id, first_id)
+        self.assertEqual(
+            self.agent._sessions["session"].recommended_ids,
+            {first_id, second_id},
+        )
+
+    def test_diversification_reuses_seen_results_only_as_fallback(self) -> None:
+        first = self.agent.respond("session", "I need a shoe.", 1, 2)
+        second = self.agent.respond("session", "I am still considering shoes.", 2, 2)
+
+        self.assertEqual(len(first["recommendations"]), 2)
+        self.assertEqual(len(second["recommendations"]), 2)
+        self.assertEqual(
+            {item["parent_asin"] for item in second["recommendations"]},
+            {item["parent_asin"] for item in first["recommendations"]},
+        )
+
+    def test_intent_override_resets_recommendation_history(self) -> None:
+        first = self.agent.respond("session", "I need a shoe.", 1, 1)
+        first_id = first["recommendations"][0]["parent_asin"]
+
+        self.agent.respond(
+            "session",
+            "Actually, ignore my earlier preference. I still need a shoe.",
+            2,
+            1,
+        )
+
+        state = self.agent._sessions["session"]
+        self.assertIn(first_id, state.recommended_ids)
+        self.assertEqual(len(state.recommended_ids), 1)
 
     def test_intent_override_discards_intermediate_preferences(self) -> None:
         self.agent.respond("session", "I need a shoe.", 1, 2)
