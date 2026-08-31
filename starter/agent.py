@@ -476,8 +476,8 @@ class Agent:
                 return priority
         return DEFAULT_PRIORITY
 
-    def _question(self, state: SessionState, query: str) -> tuple[str, str]:
-        """Ask an unanswered question that best separates current candidates."""
+    def _question(self, state: SessionState, query: str, turn: int) -> tuple[str, str]:
+        """Prioritize high-yield early questions, then maximize candidate reduction."""
         priority = self._category_priority(query)
         available = [
             attribute for attribute in priority
@@ -490,30 +490,34 @@ class Agent:
         candidates = self._candidates(query)[:30]
         candidate_indices = [row_index for row_index, _ in candidates]
 
-        def utility(attribute: str) -> tuple[float, int]:
+        def utility(attribute: str) -> tuple[float, float, int]:
             values = [
                 frozenset(self._product_attributes[index].get(attribute, set()))
                 for index in candidate_indices
             ]
             covered = sum(bool(value) for value in values)
-            distinct_variants = len(set(values))
-            # Coverage prevents a single noisy match from dominating; diversity
-            # estimates whether the answer can reorder the current result set.
-            information = (
-                (covered / len(values)) * max(0, distinct_variants - 1)
+            coverage = covered / len(values) if values else 0.0
+            counts: dict[frozenset[str], int] = {}
+            for value in values:
+                counts[value] = counts.get(value, 0) + 1
+            # If the customer's answer identifies one of these groups, the
+            # expected remaining fraction is sum(p(group)^2). Prefer questions
+            # whose answer is expected to remove the largest candidate share.
+            reduction = (
+                1.0 - sum(count * count for count in counts.values()) / float(len(values) ** 2)
                 if values else 0.0
             )
-            return information, -priority.index(attribute)
+            return reduction, coverage, -priority.index(attribute)
 
-        # Public evaluation constraints are overwhelmingly product features or
-        # materials. Ask about those high-yield attributes before spending a
-        # turn on sparse attributes such as size or use case. Candidate utility
-        # still decides between feature and material for the current result set.
-        high_value = [
+        # The first two turns retain the strong feature/material policy from
+        # the higher-scoring baseline. From turn three onward, select freely by
+        # expected candidate reduction; coverage and category order break ties.
+        early_attributes = [
             attribute for attribute in available
             if attribute in HIGH_VALUE_ATTRIBUTES
         ]
-        attribute = max(high_value or available, key=utility)
+        pool = early_attributes if turn <= 2 and early_attributes else available
+        attribute = max(pool, key=utility)
         message = QUESTION_TEXT[attribute]
         state.asked_attributes.add(attribute)
         return attribute, message
@@ -687,7 +691,7 @@ class Agent:
             raise RuntimeError("reset must be called before respond")
         self._remember(state, user_message)
         query = self._retrieval_query(state)
-        attribute, message = self._question(state, query)
+        attribute, message = self._question(state, query, turn)
         recommendations = self._recommend(
             query,
             top_k,

@@ -110,6 +110,19 @@ class AgentTest(unittest.TestCase):
         self.assertEqual(first["ask_attribute"], "feature")
         self.assertEqual(second["ask_attribute"], "material")
 
+    def test_question_policy_opens_to_other_attributes_after_turn_two(self) -> None:
+        first = self.agent.respond("session", "I need a shoe.", 1, 2)
+        second = self.agent.respond(
+            "session", "I don't have a preference for feature.", 2, 2
+        )
+        third = self.agent.respond(
+            "session", "I don't have a preference for material.", 3, 2
+        )
+
+        self.assertEqual(first["ask_attribute"], "feature")
+        self.assertEqual(second["ask_attribute"], "material")
+        self.assertNotIn(third["ask_attribute"], {"feature", "material"})
+
     def test_boundary_answer_marks_attribute_as_answered(self) -> None:
         first = self.agent.respond("session", "I need a shoe.", 1, 2)
         second = self.agent.respond(
