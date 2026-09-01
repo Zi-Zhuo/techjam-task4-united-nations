@@ -30,5 +30,6 @@ test = "python -m unittest discover -s tests -v"
 check = { depends-on = ["test", "validate-data"] }
 evaluate = { cmd = "python -m evaluator.local_evaluator", depends-on = ["validate-data"] }
 evaluate-robustness = { cmd = "python -m scripts.evaluate_robustness --output robustness_results.json", depends-on = ["validate-data"] }
+demo = "python -m scripts.web_demo --host 127.0.0.1 --port 8765"
 runtime-check = "python -m scripts.runtime_check"
 evaluate-offline-cpu = { cmd = "python -m evaluator.local_evaluator", depends-on = ["validate-data"], env = { BERT_DEVICE = "cpu", HF_HUB_OFFLINE = "1", TRANSFORMERS_OFFLINE = "1" } }

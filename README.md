@@ -50,6 +50,19 @@ The first semantic retrieval downloads MiniLM-L12 and builds normalized embeddin
 slow path and displays a progress bar. Later runs memory-map the matching float32 cache from
 `.cache/bert_embeddings/`. Exact metadata retrieval can answer without loading the dense model.
 
+### Local browser demo
+
+The GitHub demo tools are included in the final integration. Start the loopback-only server with:
+
+```bash
+pixi run demo
+```
+
+Open `http://127.0.0.1:8765/`, select a public sample, and advance the conversation one turn at a time or run it
+to completion. The target and hidden simulator state remain sealed until the session ends and the user explicitly
+reveals them. Demo replay uses a separate adapter built from the official simulator helpers; it does not modify the
+official batch evaluator.
+
 ### Runtime configuration
 
 | Environment variable | Default | Purpose |
@@ -268,8 +281,10 @@ public-set overfitting; it is not access to evaluator state or target labels.
 | `docs/evaluation_config.json` | Official metric configuration |
 | `data/public_set.jsonl` | Public development sessions; never read by the Agent |
 | `scripts/data.py` | Catalog download and validation |
+| `scripts/web_demo.py`, `demo/index.html` | Loopback-only conversation demo |
+| `scripts/demo_evaluation_session.py` | Demo-only turn replay adapter |
 | `scripts/evaluate_robustness.py` | Unseen-target robustness audit |
-| `tests/` | Agent, evaluator, data, and robustness tests |
+| `tests/` | Agent, evaluator, data, demo, and robustness tests |
 
 ## Data attribution
 
