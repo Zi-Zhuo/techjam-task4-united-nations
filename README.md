@@ -65,6 +65,7 @@ Available tasks:
 | `pixi run runtime-check` | Verify the active Python, NumPy/BLAS, Torch, and device runtime |
 | `pixi run evaluate` | Run the starter on the public set and write `results.json` |
 | `pixi run evaluate-robustness` | Run the 40-session distribution-aware pseudo-private audit |
+| `pixi run demo` | Open a local API/UI for replaying one public evaluator session |
 | `pixi run evaluate-offline-cpu` | Evaluate with CPU and Hugging Face offline mode enforced |
 
 Python 3.10–3.13 and the Sentence Transformers/PyTorch dependencies are locked through `pixi.toml`.
@@ -78,6 +79,28 @@ all 200 per-session records, while the console intentionally omits them. Record 
 
 The historical weak BM25 starter scores Hit Rate@10 `0.125`, MRR `0.068034`, and
 MTTC `9.81` on the released public set. See `docs/baseline_results.json`.
+
+## Single-session journey demo
+
+Run the local browser demo from the repository root:
+
+```bash
+pixi run demo
+```
+
+Then open `http://127.0.0.1:8765/`. Choose any public sample and either advance one
+turn at a time or run the session to completion. The page shows the deterministic
+customer messages, Agent question, normalized Top 10, and the exact payload sent to
+`Agent.respond`. The target stays sealed until the official hit/max-turn stopping
+condition is reached; revealing it afterward adds post-hoc target markers and the
+hidden simulator card for audit.
+
+The batch evaluator and demo share the same `EvaluationSession` state machine, so
+override eligibility, Boundary behavior, invalid-response fallback, recommendation
+normalization, and turn-10 stopping rules are identical. This is a loopback-only
+demonstration server, not a production or public-network deployment. The Agent
+selects CPU automatically on computers without CUDA; the first semantic fallback may
+still take longer while the local model/cache is loaded.
 
 ## Distribution-aware robustness audit
 

@@ -1,0 +1,599 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TechJam 检索历程演示</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #18221f;
+      --muted: #68736e;
+      --paper: #f7f5ef;
+      --surface: #fffdf8;
+      --line: #deddd6;
+      --green: #0c6b58;
+      --green-soft: #dff1e9;
+      --orange: #b35b23;
+      --orange-soft: #f9e8da;
+      --red: #a13737;
+      --red-soft: #f9e2df;
+      --blue: #315d82;
+      --blue-soft: #e4eef7;
+      --shadow: 0 18px 50px rgba(35, 44, 40, .08);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 5% 5%, rgba(222, 238, 228, .9), transparent 31rem),
+        radial-gradient(circle at 95% 22%, rgba(250, 226, 205, .65), transparent 28rem),
+        var(--paper);
+    }
+    button, select { font: inherit; }
+    button { cursor: pointer; }
+    button:disabled { cursor: wait; opacity: .48; }
+    code, pre, .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+
+    .shell { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 48px 0 72px; }
+    .masthead { display: grid; grid-template-columns: 1.35fr .65fr; gap: 36px; align-items: end; margin-bottom: 28px; }
+    .eyebrow { color: var(--green); font-size: 12px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
+    h1 { margin: 10px 0 12px; font-family: Georgia, "Times New Roman", serif; font-size: clamp(38px, 6vw, 66px); line-height: .99; letter-spacing: -.035em; font-weight: 500; }
+    .lede { max-width: 730px; margin: 0; color: var(--muted); font-size: 16px; line-height: 1.75; }
+    .truth-note { border-left: 2px solid var(--green); padding: 4px 0 4px 18px; color: var(--muted); font-size: 13px; line-height: 1.65; }
+
+    .panel { border: 1px solid rgba(110, 119, 113, .25); border-radius: 22px; background: rgba(255, 253, 248, .88); box-shadow: var(--shadow); backdrop-filter: blur(10px); }
+    .picker { display: grid; grid-template-columns: 180px minmax(260px, 1fr) auto; gap: 14px; align-items: end; padding: 20px; }
+    label { display: grid; gap: 7px; color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .035em; }
+    select { width: 100%; min-height: 46px; padding: 0 38px 0 13px; border: 1px solid var(--line); border-radius: 12px; color: var(--ink); background: var(--surface); }
+    .primary, .secondary, .quiet { min-height: 46px; border-radius: 12px; padding: 0 18px; font-weight: 750; }
+    .primary { border: 1px solid var(--green); color: white; background: var(--green); box-shadow: 0 7px 18px rgba(12, 107, 88, .18); }
+    .primary:hover:not(:disabled) { background: #075c4c; }
+    .secondary { border: 1px solid var(--line); color: var(--ink); background: var(--surface); }
+    .secondary:hover:not(:disabled), .quiet:hover:not(:disabled) { border-color: #aab0ab; background: #faf9f4; }
+    .quiet { border: 1px solid transparent; color: var(--green); background: transparent; }
+
+    .empty { margin-top: 22px; padding: 55px 24px; text-align: center; color: var(--muted); }
+    .empty-mark { width: 50px; height: 50px; display: grid; place-items: center; margin: 0 auto 14px; border-radius: 50%; color: var(--green); background: var(--green-soft); font-weight: 900; }
+    .empty strong { display: block; color: var(--ink); margin-bottom: 7px; }
+
+    .session { display: grid; gap: 18px; margin-top: 22px; }
+    .summary { padding: 22px; }
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+    .stat { min-height: 84px; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: rgba(255,255,255,.54); }
+    .stat-label { color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .stat-value { margin-top: 9px; font-size: 18px; font-weight: 760; overflow-wrap: anywhere; }
+    .stat-value.good { color: var(--green); }
+    .stat-value.bad { color: var(--red); }
+
+    .summary-grid { display: grid; grid-template-columns: 1.25fr .75fr; gap: 16px; margin-top: 16px; }
+    .profile, .target-box, .pending { border-radius: 16px; padding: 17px; }
+    .profile { background: #f0eee7; }
+    .target-box { position: relative; overflow: hidden; color: white; background: #1b2924; }
+    .target-box::after { content: ""; position: absolute; right: -35px; bottom: -45px; width: 150px; height: 150px; border-radius: 50%; border: 24px solid rgba(255,255,255,.05); }
+    .section-kicker { margin-bottom: 8px; color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .target-box .section-kicker { color: #a9bbb4; }
+    .profile-summary, .target-title { font-size: 15px; line-height: 1.55; }
+    .tag-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+    .tag { display: inline-flex; align-items: center; min-height: 25px; padding: 3px 9px; border-radius: 999px; color: #40504a; background: #e0ded6; font-size: 11px; font-weight: 700; }
+    .target-box .tag { color: #dceae5; background: rgba(255,255,255,.1); }
+    .seal { display: flex; align-items: center; gap: 12px; }
+    .seal-icon { width: 38px; height: 38px; flex: 0 0 auto; display: grid; place-items: center; border: 1px solid rgba(255,255,255,.18); border-radius: 50%; }
+    .target-meta { position: relative; z-index: 1; margin-top: 8px; color: #c7d4cf; font-size: 12px; line-height: 1.55; }
+
+    .controls { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; padding-top: 17px; }
+    .controls .hint { margin-left: auto; color: var(--muted); font-size: 12px; }
+    .pending { margin-top: 16px; border: 1px dashed #b8c9c2; background: #f3faf7; }
+    .pending-head { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 7px; }
+    .pending strong { font-size: 13px; }
+    .source { color: var(--blue); font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+    .pending p { margin: 0; line-height: 1.6; }
+
+    .timeline-head { display: flex; align-items: end; justify-content: space-between; margin: 12px 2px 0; }
+    .timeline-head h2 { margin: 0; font-family: Georgia, "Times New Roman", serif; font-size: 30px; font-weight: 500; }
+    .timeline-head span { color: var(--muted); font-size: 12px; }
+    .timeline { position: relative; display: grid; gap: 16px; }
+    .turn { position: relative; padding: 22px; }
+    .turn-header { display: flex; justify-content: space-between; gap: 14px; align-items: center; margin-bottom: 16px; }
+    .turn-number { display: flex; align-items: center; gap: 10px; font-size: 18px; font-weight: 820; }
+    .turn-dot { width: 29px; height: 29px; display: grid; place-items: center; border-radius: 50%; color: white; background: var(--green); font-size: 12px; }
+    .badges { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+    .badge { display: inline-flex; align-items: center; min-height: 25px; padding: 3px 9px; border-radius: 999px; color: #45524e; background: #ecebe5; font-size: 10px; font-weight: 800; letter-spacing: .035em; text-transform: uppercase; }
+    .badge.green { color: var(--green); background: var(--green-soft); }
+    .badge.orange { color: var(--orange); background: var(--orange-soft); }
+    .badge.red { color: var(--red); background: var(--red-soft); }
+    .badge.blue { color: var(--blue); background: var(--blue-soft); }
+
+    .conversation { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .bubble { padding: 16px; border-radius: 15px; line-height: 1.65; }
+    .bubble.user { background: #eff3f0; border-bottom-left-radius: 4px; }
+    .bubble.agent { background: #f8eee5; border-bottom-right-radius: 4px; }
+    .bubble-label { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 7px; color: var(--muted); font-size: 10px; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
+    .bubble p { margin: 0; white-space: pre-wrap; }
+    .ask { margin-top: 11px; padding-top: 10px; border-top: 1px solid rgba(90, 88, 80, .12); color: var(--orange); font-size: 12px; font-weight: 750; }
+
+    .recommendations { margin-top: 16px; }
+    .recommendations-head { display: flex; justify-content: space-between; gap: 10px; align-items: center; margin: 0 1px 9px; }
+    .recommendations-head strong { font-size: 13px; }
+    .recommendations-head span { color: var(--muted); font-size: 11px; }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 13px; }
+    table { width: 100%; border-collapse: collapse; background: rgba(255,255,255,.48); }
+    th, td { padding: 11px 12px; border-bottom: 1px solid #e7e5de; text-align: left; vertical-align: top; }
+    tr:last-child td { border-bottom: 0; }
+    th { color: var(--muted); background: #f2f0e9; font-size: 10px; letter-spacing: .07em; text-transform: uppercase; }
+    td { font-size: 12px; }
+    .rank { width: 42px; color: var(--green); font-size: 15px; font-weight: 850; }
+    .product-title { min-width: 270px; max-width: 550px; line-height: 1.45; font-weight: 700; }
+    .product-sub { margin-top: 4px; color: var(--muted); font-size: 10px; font-weight: 500; }
+    .target-row { background: #eaf8f1; box-shadow: inset 3px 0 var(--green); }
+    .unscored-row { background: #fff4e9; box-shadow: inset 3px 0 var(--orange); }
+    .empty-recs { padding: 18px; border: 1px dashed var(--line); border-radius: 13px; color: var(--muted); text-align: center; font-size: 12px; }
+    details { margin-top: 12px; }
+    summary { color: var(--muted); cursor: pointer; font-size: 11px; font-weight: 750; }
+    pre { overflow: auto; max-height: 280px; margin: 9px 0 0; padding: 13px; border-radius: 10px; color: #dce8e3; background: #1f2b27; font-size: 11px; line-height: 1.55; white-space: pre-wrap; }
+    .degraded { margin-top: 12px; padding: 11px 13px; border-radius: 10px; color: var(--red); background: var(--red-soft); font-size: 12px; }
+
+    .result { padding: 23px; border-color: rgba(12,107,88,.32); }
+    .result-grid { display: grid; grid-template-columns: 1fr auto; gap: 20px; align-items: center; }
+    .result h3 { margin: 4px 0 8px; font-family: Georgia, "Times New Roman", serif; font-size: 27px; font-weight: 500; }
+    .result p { margin: 0; color: var(--muted); line-height: 1.6; }
+    .result-score { min-width: 130px; text-align: right; }
+    .result-score strong { display: block; color: var(--green); font-family: Georgia, "Times New Roman", serif; font-size: 40px; font-weight: 500; }
+    .result-score span { color: var(--muted); font-size: 11px; }
+    .hidden-state { margin-top: 13px; }
+
+    .toast { position: fixed; right: 22px; bottom: 22px; z-index: 10; max-width: min(430px, calc(100vw - 44px)); padding: 13px 16px; border-radius: 12px; color: white; background: #29342f; box-shadow: var(--shadow); font-size: 13px; line-height: 1.5; }
+    .busy .primary::after { content: ""; display: inline-block; width: 11px; height: 11px; margin-left: 8px; border: 2px solid rgba(255,255,255,.4); border-top-color: white; border-radius: 50%; animation: spin .7s linear infinite; }
+    [hidden] { display: none !important; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    @media (max-width: 820px) {
+      .masthead, .summary-grid { grid-template-columns: 1fr; }
+      .picker { grid-template-columns: 1fr; }
+      .stats { grid-template-columns: 1fr 1fr; }
+      .conversation { grid-template-columns: 1fr; }
+      .controls .hint { width: 100%; margin: 3px 0 0; }
+    }
+    @media (max-width: 520px) {
+      .shell { width: min(100% - 20px, 1180px); padding-top: 28px; }
+      .stats { grid-template-columns: 1fr; }
+      .turn, .summary { padding: 16px; }
+      .result-grid { grid-template-columns: 1fr; }
+      .result-score { text-align: left; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="masthead">
+      <div>
+        <div class="eyebrow">TechJam · evaluator replay</div>
+        <h1>一次检索，完整展开</h1>
+        <p class="lede">选择一个 public sample，逐轮观察确定性用户模拟器、当前 Agent 和官方 Top‑10 停止规则如何共同推进检索。</p>
+      </div>
+      <div class="truth-note">同一状态机同时驱动批量 evaluator 与本页面。目标商品不会传给 Agent，也不会在运行中被高亮；会话结束后才可揭示并回看。</div>
+    </header>
+
+    <section class="panel picker" aria-label="样本选择">
+      <label>场景筛选
+        <select id="scenarioSelect" aria-label="场景筛选"></select>
+      </label>
+      <label>Public sample
+        <select id="sampleSelect" aria-label="Public sample"></select>
+      </label>
+      <button class="primary" id="startButton">开始检索历程</button>
+    </section>
+
+    <section class="panel empty" id="emptyState">
+      <div class="empty-mark">→</div>
+      <strong>先选择一个用户会话</strong>
+      每次运行都会创建全新的 Agent session。首次触发语义检索时，本地模型加载可能稍慢。
+    </section>
+
+    <div class="session" id="sessionView" hidden>
+      <section class="panel summary">
+        <div class="stats" id="stats"></div>
+        <div class="summary-grid">
+          <div class="profile" id="profile"></div>
+          <div class="target-box" id="targetBox"></div>
+        </div>
+        <div class="pending" id="pending"></div>
+        <div class="controls">
+          <button class="primary" id="nextButton">运行下一轮</button>
+          <button class="secondary" id="allButton">自动跑完</button>
+          <button class="secondary" id="revealButton" disabled>结束后揭示目标</button>
+          <button class="quiet" id="restartButton">重新开始本样本</button>
+          <span class="hint" id="controlHint">请求固定使用 top_k = 10</span>
+        </div>
+      </section>
+
+      <section class="panel result" id="resultPanel" hidden></section>
+
+      <div class="timeline-head">
+        <h2>检索时间线</h2>
+        <span>Agent 实际输入与 evaluator 规范化输出</span>
+      </div>
+      <section class="timeline" id="timeline" aria-live="polite"></section>
+    </div>
+  </main>
+  <div class="toast" id="toast" role="status" hidden></div>
+
+  <script>
+    "use strict";
+
+    const ui = {
+      scenario: document.getElementById("scenarioSelect"),
+      sample: document.getElementById("sampleSelect"),
+      start: document.getElementById("startButton"),
+      empty: document.getElementById("emptyState"),
+      view: document.getElementById("sessionView"),
+      stats: document.getElementById("stats"),
+      profile: document.getElementById("profile"),
+      target: document.getElementById("targetBox"),
+      pending: document.getElementById("pending"),
+      next: document.getElementById("nextButton"),
+      all: document.getElementById("allButton"),
+      reveal: document.getElementById("revealButton"),
+      restart: document.getElementById("restartButton"),
+      hint: document.getElementById("controlHint"),
+      result: document.getElementById("resultPanel"),
+      timeline: document.getElementById("timeline"),
+      toast: document.getElementById("toast"),
+    };
+
+    const scenarioLabels = {
+      buying: "Buying",
+      browsing: "Browsing",
+      intent_override: "Intent Override",
+      boundary: "Boundary",
+    };
+    const sourceLabels = {
+      initial: "Initial prompt",
+      simulator_reply: "Simulator reply",
+      intent_override: "Intent override",
+    };
+    const transitionLabels = {
+      customer_reply: "继续对话",
+      override: "下一轮切换意图",
+      hit: "有效命中",
+      max_turns: "达到 10 轮",
+    };
+
+    let samples = [];
+    let state = null;
+    let busy = false;
+    let toastTimer = null;
+
+    function node(tag, className, text) {
+      const element = document.createElement(tag);
+      if (className) element.className = className;
+      if (text !== undefined && text !== null) element.textContent = String(text);
+      return element;
+    }
+
+    function append(parent, ...children) {
+      for (const child of children) if (child) parent.appendChild(child);
+      return parent;
+    }
+
+    function badge(text, tone) {
+      return node("span", `badge${tone ? ` ${tone}` : ""}`, text);
+    }
+
+    function showToast(message) {
+      window.clearTimeout(toastTimer);
+      ui.toast.textContent = message;
+      ui.toast.hidden = false;
+      toastTimer = window.setTimeout(() => { ui.toast.hidden = true; }, 5000);
+    }
+
+    async function api(path, payload) {
+      const response = await fetch(path, {
+        method: payload ? "POST" : "GET",
+        headers: payload ? {"Content-Type": "application/json"} : {},
+        body: payload ? JSON.stringify(payload) : undefined,
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+      return data;
+    }
+
+    function setBusy(value, label) {
+      busy = value;
+      document.body.classList.toggle("busy", value);
+      ui.start.disabled = value;
+      ui.scenario.disabled = value;
+      ui.sample.disabled = value;
+      ui.next.disabled = value || !state || state.status.done;
+      ui.all.disabled = value || !state || state.status.done;
+      ui.reveal.disabled = value || !state || !state.reveal_available;
+      ui.restart.disabled = value || !state;
+      ui.hint.textContent = label || "请求固定使用 top_k = 10";
+    }
+
+    function fillScenarios() {
+      ui.scenario.replaceChildren();
+      ui.scenario.appendChild(new Option("全部场景", "all"));
+      for (const key of Object.keys(scenarioLabels)) {
+        ui.scenario.appendChild(new Option(scenarioLabels[key], key));
+      }
+    }
+
+    function fillSamples() {
+      const selected = ui.sample.value;
+      const scenario = ui.scenario.value;
+      const filtered = samples.filter(item => scenario === "all" || item.scenario_type === scenario);
+      ui.sample.replaceChildren();
+      for (const item of filtered) {
+        const label = `${item.sample_id} · ${scenarioLabels[item.scenario_type] || item.scenario_type} · ${item.difficulty_bucket}`;
+        ui.sample.appendChild(new Option(label, item.sample_id));
+      }
+      if (filtered.some(item => item.sample_id === selected)) ui.sample.value = selected;
+      ui.start.disabled = busy || filtered.length === 0;
+    }
+
+    function addStat(label, value, tone) {
+      const card = node("div", "stat");
+      append(card, node("div", "stat-label", label), node("div", `stat-value${tone ? ` ${tone}` : ""}`, value));
+      ui.stats.appendChild(card);
+    }
+
+    function formatPrice(value) {
+      return value === null || value === undefined ? "—" : `$${Number(value).toFixed(2)}`;
+    }
+
+    function renderSummary() {
+      ui.stats.replaceChildren();
+      addStat("Sample", state.sample.sample_id);
+      addStat("Scenario", scenarioLabels[state.sample.scenario_type] || state.sample.scenario_type);
+      addStat("Progress", `${state.status.completed_turns} / ${state.status.max_turns}`);
+      const statusText = state.status.done ? (state.status.hit ? "HIT" : "MISS") : "RUNNING";
+      addStat("Evaluator status", statusText, state.status.hit ? "good" : (state.status.done ? "bad" : ""));
+
+      ui.profile.replaceChildren();
+      append(ui.profile,
+        node("div", "section-kicker", "Anonymized user profile"),
+        node("div", "profile-summary", state.profile.summary || "No profile summary")
+      );
+      const tags = node("div", "tag-row");
+      for (const value of state.profile.preference_tags || []) tags.appendChild(node("span", "tag", value));
+      tags.appendChild(node("span", "tag", state.profile.purchase_frequency || "frequency unknown"));
+      tags.appendChild(node("span", "tag", state.profile.rating_style || "rating style unknown"));
+      ui.profile.appendChild(tags);
+
+      renderTarget();
+      renderPending();
+    }
+
+    function renderTarget() {
+      ui.target.replaceChildren();
+      ui.target.appendChild(node("div", "section-kicker", "Evaluator-only target"));
+      if (!state.revealed) {
+        const seal = node("div", "seal");
+        append(seal,
+          node("div", "seal-icon", "⌁"),
+          append(node("div"), node("div", "target-title", "目标保持密封"), node("div", "target-meta", state.status.done ? "会话已结束，现在可以揭示并进行事后审计。" : "运行中不显示、不标记，也不会传给 Agent。"))
+        );
+        ui.target.appendChild(seal);
+        return;
+      }
+      const product = state.target;
+      append(ui.target,
+        node("div", "target-title", product.title),
+        node("div", "target-meta mono", product.parent_asin),
+        node("div", "target-meta", `${product.store || "Unknown store"} · ${formatPrice(product.price)} · ★ ${product.average_rating ?? "—"}`)
+      );
+      const tags = node("div", "tag-row");
+      tags.appendChild(node("span", "tag", "Post-hoc reveal"));
+      if (product.category) tags.appendChild(node("span", "tag", product.category));
+      ui.target.appendChild(tags);
+    }
+
+    function renderPending() {
+      ui.pending.replaceChildren();
+      if (!state.pending_user) {
+        ui.pending.hidden = true;
+        return;
+      }
+      ui.pending.hidden = false;
+      const head = node("div", "pending-head");
+      append(head,
+        node("strong", "", `下一条用户消息 · Turn ${state.pending_user.turn}`),
+        node("span", "source", sourceLabels[state.pending_user.source] || state.pending_user.source)
+      );
+      append(ui.pending, head, node("p", "", state.pending_user.message));
+    }
+
+    function renderResult() {
+      ui.result.replaceChildren();
+      ui.result.hidden = !state.status.done;
+      if (!state.status.done) return;
+      const grid = node("div", "result-grid");
+      const copy = node("div");
+      copy.appendChild(node("div", "section-kicker", "Official session result"));
+      copy.appendChild(node("h3", "", state.status.hit ? "在当前有效意图下命中目标" : "10 轮内未命中目标"));
+      const detail = state.status.hit
+        ? `首次有效命中发生在第 ${state.status.first_hit_turn} 轮，命中轮排名为 #${state.status.hit_rank}。`
+        : "Evaluator 按 miss 处理：Reciprocal Rank = 0，MTTC 计为第 11 轮。";
+      copy.appendChild(node("p", "", detail));
+      const score = node("div", "result-score");
+      append(score,
+        node("strong", "", Number(state.status.reciprocal_rank || 0).toFixed(3)),
+        node("span", "", "Reciprocal Rank")
+      );
+      append(grid, copy, score);
+      ui.result.appendChild(grid);
+      if (state.revealed) {
+        const details = node("details", "hidden-state");
+        details.appendChild(node("summary", "", "查看结束后揭示的 intent card / behavior"));
+        details.appendChild(node("pre", "", JSON.stringify(state.hidden_simulator_state, null, 2)));
+        ui.result.appendChild(details);
+      }
+    }
+
+    function productTable(turn) {
+      if (!turn.recommendations.length) return node("div", "empty-recs", "本轮规范化后没有有效推荐。Evaluator 会继续会话。 ");
+      const wrap = node("div", "table-wrap");
+      const table = node("table");
+      const thead = node("thead");
+      const headRow = node("tr");
+      for (const heading of ["Rank", "ASIN", "Catalog product", "Agent score", "Audit"]) headRow.appendChild(node("th", "", heading));
+      thead.appendChild(headRow);
+      table.appendChild(thead);
+      const tbody = node("tbody");
+      for (const item of turn.recommendations) {
+        const rowClass = item.is_target ? (item.target_status === "eligible_hit" ? "target-row" : "unscored-row") : "";
+        const row = node("tr", rowClass);
+        row.appendChild(node("td", "rank", `#${item.rank}`));
+        row.appendChild(node("td", "mono", item.product.parent_asin));
+        const product = node("td");
+        product.appendChild(node("div", "product-title", item.product.title));
+        const metadata = [item.product.store, item.product.category, formatPrice(item.product.price)].filter(Boolean).join(" · ");
+        product.appendChild(node("div", "product-sub", metadata));
+        row.appendChild(product);
+        row.appendChild(node("td", "mono", item.score === null ? "—" : Number(item.score).toFixed(4)));
+        const audit = node("td");
+        if (item.is_target && item.target_status === "eligible_hit") audit.appendChild(badge("Target · scored", "green"));
+        else if (item.is_target) audit.appendChild(badge("Target · override 前不计分", "orange"));
+        else if (item.repeated) audit.appendChild(badge("Repeated", "blue"));
+        else audit.textContent = "—";
+        row.appendChild(audit);
+        tbody.appendChild(row);
+      }
+      table.appendChild(tbody);
+      wrap.appendChild(table);
+      return wrap;
+    }
+
+    function renderTurn(turn) {
+      const article = node("article", "panel turn");
+      const header = node("div", "turn-header");
+      const number = node("div", "turn-number");
+      append(number, node("span", "turn-dot", turn.turn), node("span", "", `Turn ${turn.turn}`));
+      const badges = node("div", "badges");
+      badges.appendChild(badge(transitionLabels[turn.transition] || turn.transition, turn.transition === "hit" ? "green" : ""));
+      if (!turn.scoring_active) badges.appendChild(badge("旧意图 · target 不计分", "orange"));
+      if (turn.override_activated) badges.appendChild(badge("Override armed", "blue"));
+      if (turn.boundary_consumed) badges.appendChild(badge("Boundary consumed", "blue"));
+      if (turn.degraded) badges.appendChild(badge("Empty fallback", "red"));
+      append(header, number, badges);
+      article.appendChild(header);
+
+      const conversation = node("div", "conversation");
+      const user = node("div", "bubble user");
+      const userLabel = node("div", "bubble-label");
+      append(userLabel, node("span", "", "User simulator"), node("span", "", sourceLabels[turn.user.source] || turn.user.source));
+      append(user, userLabel, node("p", "", turn.user.message));
+      const agent = node("div", "bubble agent");
+      const agentLabel = node("div", "bubble-label");
+      append(agentLabel, node("span", "", "Agent"), node("span", "", `${turn.usage.total_tokens} reported tokens`));
+      append(agent, agentLabel, node("p", "", turn.agent.message || "(empty message)"));
+      agent.appendChild(node("div", "ask", `ask_attribute: ${turn.agent.ask_attribute ?? "null"}`));
+      append(conversation, user, agent);
+      article.appendChild(conversation);
+
+      const recs = node("div", "recommendations");
+      const recHead = node("div", "recommendations-head");
+      append(recHead,
+        node("strong", "", `官方规范化 Top‑10 · ${turn.normalized_count} 项`),
+        node("span", "", "Agent score 仅供观察，官方 evaluator 不使用")
+      );
+      append(recs, recHead, productTable(turn));
+      article.appendChild(recs);
+      if (turn.degraded) article.appendChild(node("div", "degraded", turn.degraded_reason));
+
+      const details = node("details");
+      details.appendChild(node("summary", "", "查看本轮实际传给 Agent 的 payload"));
+      details.appendChild(node("pre", "", JSON.stringify(turn.request_payload, null, 2)));
+      article.appendChild(details);
+      return article;
+    }
+
+    function render() {
+      if (!state) return;
+      ui.empty.hidden = true;
+      ui.view.hidden = false;
+      renderSummary();
+      renderResult();
+      ui.timeline.replaceChildren(...state.turns.map(renderTurn));
+      setBusy(busy);
+    }
+
+    async function startSession() {
+      if (!ui.sample.value) return;
+      try {
+        setBusy(true, "正在创建全新的 Agent session…");
+        state = await api("/api/session", {sample_id: ui.sample.value});
+        render();
+      } catch (error) {
+        showToast(error.message);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function stepOnce(scroll = true) {
+      if (!state || state.status.done) return;
+      setBusy(true, state.status.completed_turns === 0 ? "首轮可能触发本地模型加载，请稍候…" : `正在运行 Turn ${state.status.next_turn}…`);
+      try {
+        state = await api("/api/step", {session_token: state.session_token});
+        render();
+        if (scroll) ui.timeline.lastElementChild?.scrollIntoView({behavior: "smooth", block: "start"});
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function runAll() {
+      if (!state || state.status.done) return;
+      try {
+        while (!state.status.done) await stepOnce(false);
+        render();
+        ui.result.scrollIntoView({behavior: "smooth", block: "center"});
+      } catch (error) {
+        showToast(error.message);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function revealTarget() {
+      if (!state || !state.reveal_available) return;
+      try {
+        setBusy(true, "正在生成事后目标审计…");
+        state = await api("/api/reveal", {session_token: state.session_token});
+        render();
+      } catch (error) {
+        showToast(error.message);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function initialize() {
+      fillScenarios();
+      try {
+        const data = await api("/api/samples");
+        samples = data.samples;
+        fillSamples();
+      } catch (error) {
+        showToast(`无法载入样本：${error.message}`);
+      }
+    }
+
+    ui.scenario.addEventListener("change", fillSamples);
+    ui.start.addEventListener("click", startSession);
+    ui.next.addEventListener("click", async () => {
+      try { await stepOnce(true); } catch (error) { showToast(error.message); }
+    });
+    ui.all.addEventListener("click", runAll);
+    ui.reveal.addEventListener("click", revealTarget);
+    ui.restart.addEventListener("click", startSession);
+    initialize();
+  </script>
+</body>
+</html>
