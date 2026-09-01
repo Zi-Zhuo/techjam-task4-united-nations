@@ -160,44 +160,120 @@ Agentが質問属性 + カタログ内のTop 10商品を返す
 `respond()` に渡されるのは、そのターンの `user_message`、ターン番号、`top_k=10` です。
 過去の会話、抽出済み条件、SQL候補集合などは、Agent側が `session_id` ごとに保存します。
 
-## SQL・BERTを使う場合
+## 現行システム：メタデータ優先ハイブリッド検索
 
-SQLによる属性フィルタ、BM25、BERT/Sentence Transformerによるsemantic rerankingを組み合わせられます。
-例えば次の構成です。
+現在の `starter/agent.py` は、**カタログの完全一致メタデータを最優先し、証拠が弱い場合だけ
+BM25とMiniLMへフォールバックする会話型検索システム**です。Agentに正解ASIN、`ground_truth`、
+評価器の内部状態は渡されません。利用するのは商品カタログとAgent APIから受け取った発話だけです。
 
-1. `reset()` でセッション状態を作る
-2. 顧客の返答から素材、色、価格などを抽出する
-3. SQLでhard constraintを満たす候補を絞る
-4. BM25やdense retrievalで候補を生成する
-5. BERTで候補をrerankし、毎ターンTop 10を返す
-6. `intent_override` が来たら古い条件を削除・置換する
+### 実行時アーキテクチャ
 
-早いターンで当てるほどMTTCとEfficiencyが良くなるため、最初の数ターンを質問だけに使うより、
-SQL絞り込み中も暫定Top 10を返す方が評価上は有利です。
+```mermaid
+flowchart LR
+    Catalog[5万件の商品カタログ] --> Index[起動時インデックス構築]
+    Index --> FTS[SQLite FTS5 / BM25]
+    Index --> Card[カテゴリ + intent-card逆引き]
+    Index --> Attr[属性・評価・人気度]
+    Catalog -. 遅延生成 / mmapキャッシュ .-> Dense[MiniLM-L12商品埋め込み]
 
-### 同梱のBERTハイブリッド・ベースライン
+    User[ユーザー発話] --> State[セッション状態更新]
+    State --> Policy[質問選択]
+    State --> Exact[カテゴリ x 開示済み制約の積集合]
+    Exact --> Evidence{証拠レベル}
 
-現在の `starter/agent.py` は、次の構成をそのまま実行できるベースラインです。
+    Evidence -->|strong または大規模な完全一致集合| Meta[メタデータ優先ランキング]
+    Evidence -->|weak または小・中規模の曖昧性| Hybrid[ハイブリッド検索]
+    Card --> Meta
+    Attr --> Meta
+    FTS --> Hybrid
+    Dense --> Hybrid
+    Hybrid --> Fusion[RRF + 除外 + coverage + 人気度]
+    Meta --> Lists[推薦件数制御 + ターン間多様化]
+    Fusion --> Lists
+    Policy --> Response[Agent応答]
+    Lists --> Response
+```
 
-1. 1〜3ターン目は feature、material、use_case を自然な会話で順番に確認する
-2. 各回答を会話履歴へ蓄積し、履歴全体をsemantic queryとして使う
-3. 各ターンでSQLite FTS5/BM25から250候補を取得する
-4. `sentence-transformers/all-MiniLM-L12-v2` の正規化埋め込みで候補をrerankする
-5. intent overrideを検出した場合は、最初の商品カテゴリだけを残して古い希望を破棄する
+### 起動時に構築するもの
 
-会話中も毎ターン暫定Top 10を返します。初回実行時にモデルを取得し、50,000商品の埋め込みを
-`.cache/bert_embeddings/` に保存します。CPUでは数十分かかる場合がありますが、2回目以降は
-このキャッシュを再利用します。
+- title、category、features、details、store、descriptionを対象にした重み付きFTS5インデックス
+- 商品ごとの素材、色、サイズ、スタイル、用途、予算、ブランド、特徴の属性集合
+- 商品メタデータから生成した順序付きintent-cardと、カテゴリ・制約から商品を引く逆引きインデックス
+- カテゴリ内で正規化したレビュー件数パーセンタイルと平均評価
+- 必要になった場合だけ生成する `sentence-transformers/all-MiniLM-L12-v2` の正規化埋め込み
+
+完全一致メタデータだけで回答できる場合、MiniLMはロードしません。semantic検索が必要になった時点で
+float32の商品埋め込みをバッチ生成し、`.cache/bert_embeddings/` に保存します。以後はmmapで再利用します。
+
+### 各ターンの処理
+
+1. **会話状態を更新する。** 新しい発話を保存し、肯定条件、否定条件、回答済み属性、除外値、上書き済み値、
+   過去に推薦したASINを更新します。否定・撤回された語はBM25とdense検索用クエリから除去します。
+2. **意図変更を処理する。** 条件の訂正では古い値だけを削除し、後から開示された有効な条件は保持します。
+   本当の `start over` では会話、カテゴリ、質問履歴、除外条件、推薦履歴をすべて初期化します。
+3. **次の質問を決める。** シミュレータ形式の開始文では、まず `ask_attribute="other"` の広い質問を使います。
+   一方、すでに2属性以上を含む自由文では冗長な広い質問を省略します。その後はBM25上位30件について、
+   属性のcoverageと値の多様性を計算し、基本的にfeature/materialを優先します。通常会話で質問候補を
+   使い切った場合は、同じ質問を繰り返さず推薦結果だけ返します。
+4. **完全一致候補を作る。** 検出カテゴリと、会話で開示されたカタログ由来制約の積集合を取り、証拠を
+   `weak`、`medium`、`strong` に分類します。早期に推薦件数を絞る評価プロトコル最適化は、カテゴリだけでなく
+   公開シミュレータの定型マーカーも確認できた場合に限ります。
+5. **検索経路を選ぶ。** strongな証拠、または50件を超える大規模な完全一致集合では、安定したメタデータ順で
+   並べ、MiniLMを省略できます。それ以外はBM25上位250件と全商品cosine類似度上位250件をRRFで統合します。
+6. **ランキングする。** 完全一致候補では制約スロット一致、LCS、制約間距離、検索スコア、カテゴリ内人気度、
+   平均評価を使います。ハイブリッド経路ではさらに除外フィルタ、intent-card boost、正条件coverage、弱い
+   人気度priorを適用します。カタログノイズで除外後の候補が0件になる場合だけ、空応答を避けるため除外前へ戻します。
+7. **推薦件数と重複を制御する。** strongな一意候補は1件、通常の早期推薦は信頼できる場合2件です。
+   完全一致候補が多い場合は、残りターンですべての未表示候補を提示できる件数へ広げます。10ターン目は
+   最大Top Kまで返します。既出商品は未表示商品より後ろへ送り、候補不足時だけ再利用します。
+
+### 主要パラメータ
+
+| パラメータ | 既定値 | 役割 |
+| --- | ---: | --- |
+| BM25候補数 | 250 | lexical候補集合 |
+| Dense候補数 | 250 | 全商品cosine検索の候補集合 |
+| RRF `k` | 60 | 順位統合の平滑化 |
+| Dense RRF重み | 0.7 | BM25重み1.0に対するsemantic寄与 |
+| 条件coverage重み | 0.01 | 多くの正条件を満たす商品への加点 |
+| Intent-card重み | 1.0 | 完全一致メタデータ候補への加点 |
+| 人気度重み | 0.00025 | カテゴリ内の弱いtie-break |
+| 早期推薦件数 | 2 | 信頼できる場合の狭い推薦リスト |
+| 埋め込みバッチサイズ | 128 | `BERT_BATCH_SIZE` で変更可能 |
+
+### 評価プロトコルへの適合と境界
+
+完全一致経路は、公開シミュレータの `A key requirement is:`、`For that, what matters is:`、
+`What I need is:` を認識し、公開されているメタデータからintent-cardを作る順序も再現します。
+これは公開セットで強い一方、定型文や生成規則への過適合リスクがあります。そのため、言い換え、未知の条件、
+カテゴリ欠損、積集合0件ではBM25＋MiniLMへ戻します。また、公開200ターゲットを除外した
+`pixi run evaluate-robustness` で別途監査できます。
+
+変更可能範囲は明確です。`starter/agent.py` はカタログと発話を使いますが、評価器をimportせず、
+`data/public_set.jsonl` や `ground_truth` を実行時に読みません。公式評価器、公開ラベル、評価設定、
+Agent API契約は `origin/main` とバイト単位で一致しています。
+
+### 画像生成用の構成仕様
+
+後でアーキテクチャ画像を生成する場合は、横長の4領域構成にします。
+
+1. 左：**入力と起動時インデックス** — 商品カタログ、FTS5、intent-card逆引き、MiniLMキャッシュ
+2. 中央左：**会話状態と質問方針** — 発話、属性抽出、否定・上書き処理、質問選択
+3. 中央右：**証拠ゲートと2経路** — `weak / medium / strong` の分岐、緑のメタデータ経路、紫のBM25＋MiniLM経路
+4. 右：**ランキングと出力** — RRF、制約・人気度、推薦件数、重複抑制、Agent応答
+
+実線は各ターンのデータフロー、破線は埋め込みの遅延ロードとキャッシュ再利用にします。会話状態はアンバー、
+メタデータ経路は緑、semantic fallbackは紫、最終推薦は青で表現し、図の下部に
+`No evaluator or ground-truth access` と書いた盾アイコンを置きます。
+
+モデルとバッチサイズは次のように上書きできます。
 
 ```bash
 BERT_MODEL_NAME=sentence-transformers/all-MiniLM-L12-v2 BERT_BATCH_SIZE=128 pixi run evaluate
 ```
 
-ローカルモデルなのでAPIトークン使用量は0です。モデル名とバッチサイズは上記の環境変数で変更できます。
-CUDAが利用可能な場合は自動的にCUDAを選択し、利用できない場合はCPUへフォールバックします。
-`BERT_DEVICE=cuda` または `BERT_DEVICE=cpu` を指定すれば明示的に上書きできます。
-Linux向けPixi環境では `pytorch-gpu` とCUDA 12ランタイム（`linux-64-cuda-12`）を解決します。
-NVIDIAドライバが見える環境でインストール後、次で確認できます。
+ローカルモデルなのでAPIトークン使用量は0です。CUDAが利用可能なら自動的にCUDAを選択し、利用できない場合は
+CPUへフォールバックします。`BERT_DEVICE=cuda` または `BERT_DEVICE=cpu` で明示的に変更できます。
 
 ```bash
 pixi run python -c "import torch; print(torch.version.cuda, torch.cuda.is_available())"
@@ -227,7 +303,10 @@ pixi run evaluate
 | `pixi run validate-data` | 公開セットとカタログを検証 |
 | `pixi run test` | ユニットテストを実行 |
 | `pixi run check` | テストと全データ検証を実行 |
+| `pixi run runtime-check` | Python、NumPy/BLAS、Torch、デバイスを確認 |
 | `pixi run evaluate` | 公開200セッションでAgentを評価 |
+| `pixi run evaluate-robustness` | 公開ターゲットを除外した40セッションの監査 |
+| `pixi run evaluate-offline-cpu` | オフライン・CPU固定で評価 |
 
 ## 評価指標
 
@@ -244,12 +323,9 @@ TechnicalScore = 0.50 × HitRate@10 + 0.30 × MRR + 0.20 × Efficiency
 
 | ファイル | 内容 |
 | --- | --- |
-| [starter/agent.py](starter/agent.py) | SQLite FTS5/BM25を使う編集可能なベースライン |
+| [starter/agent.py](starter/agent.py) | メタデータ優先・BM25/MiniLM fallbackのAgent |
 | [evaluator/local_evaluator.py](evaluator/local_evaluator.py) | 顧客シミュレータと採点処理 |
 | [docs/competition_specification.md](docs/competition_specification.md) | 競技仕様 |
 | [docs/agent_api_contract.json](docs/agent_api_contract.json) | Agent APIの機械可読スキーマ |
 | [docs/evaluation_config.json](docs/evaluation_config.json) | ターン数、Top K、評価式 |
 | [data/README.md](data/README.md) | データフィールドと取得方法 |
-
-
-えー少しだけ変更しました。
