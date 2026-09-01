@@ -1,0 +1,1774 @@
+{
+  "experiment": "distribution-aware pseudo-private target robustness evaluation",
+  "official_contract_assumptions": {
+    "catalog_rows": 50000,
+    "public_sessions": 200,
+    "private_sessions": 800,
+    "scenario_mix": {
+      "buying": 0.4,
+      "browsing": 0.4,
+      "intent_override": 0.15,
+      "boundary": 0.05
+    },
+    "simulator_policy": "same deterministic templates and ask_attribute response policy as the released evaluator",
+    "target_source": "Amazon Reviews 2023 Clothing 5-core leave-last-out"
+  },
+  "config": {
+    "suite_size": 20,
+    "total_new_sessions": 40,
+    "seed": 20260901,
+    "candidate_pool_size": 8,
+    "stress_pool_size": 128,
+    "bootstrap_resamples": 2000,
+    "skip_evaluation": false,
+    "match_fields": [
+      "log_rating_number",
+      "average_rating",
+      "log_price",
+      "price_missing",
+      "metadata_complete",
+      "metadata_richness",
+      "row_percentile",
+      "log_first_collision",
+      "log_pair_collision",
+      "log_triple_collision"
+    ]
+  },
+  "guardrails": {
+    "public_targets_excluded": true,
+    "synthetic_targets_unique_across_suites": true,
+    "ground_truth_or_sample_id_not_passed_to_agent": true,
+    "official_evaluator_functions_reused": true,
+    "paraphrase_stress_excluded_from_private_score_estimate": true
+  },
+  "reference_public_runs": {
+    "results_subset_40.json": {
+      "sample_count": 40,
+      "hit_rate_at_10": 1.0,
+      "mrr": 0.9625,
+      "mttc": 2.3,
+      "efficiency": 0.87,
+      "recommended_technical_score": 0.96275
+    },
+    "results_subset_40_holdout.json": {
+      "sample_count": 40,
+      "hit_rate_at_10": 1.0,
+      "mrr": 0.9375,
+      "mttc": 2.125,
+      "efficiency": 0.8875,
+      "recommended_technical_score": 0.95875
+    }
+  },
+  "artifacts": {
+    "catalog": "data\\catalog.jsonl",
+    "catalog_sha256": "da979b05a68af864cb0dcf9ee6a81c010c7e66a57978ad286c7a2e005fc69a67",
+    "dataset": "data\\public_set.jsonl",
+    "dataset_sha256": "571359a8a69014c43fc30d39c996c4a28e875dccc249dffc707358757beb16c0",
+    "script": "C:\\GitHub\\techjam-conversational-search-bert\\scripts\\evaluate_robustness.py",
+    "script_sha256": "392a0cec9a912b471e0618c3d1e62127d43fea29fbcd425cf5fa9c26122e9483"
+  },
+  "index_and_generation_seconds": 32.472,
+  "suites": {
+    "matched": {
+      "construction": "random draw from the nearest product-covariate neighbours",
+      "profile_policy": "reuse the paired public profile",
+      "scenario_counts": {
+        "buying": 8,
+        "boundary": 1,
+        "intent_override": 3,
+        "browsing": 8
+      },
+      "calibration": {
+        "sample_count": 20,
+        "exact_leaf_category_match_rate": 0.05,
+        "broad_category_match_rate": 1.0,
+        "row_band_match_rate": 1.0,
+        "max_absolute_standardized_mean_difference": 0.325583,
+        "fields": {
+          "log_rating_number": {
+            "anchor_mean": 7.796315,
+            "synthetic_mean": 7.410815,
+            "standardized_mean_difference": -0.159424,
+            "ks_distance": 0.2
+          },
+          "average_rating": {
+            "anchor_mean": 4.365,
+            "synthetic_mean": 4.445,
+            "standardized_mean_difference": 0.325583,
+            "ks_distance": 0.2
+          },
+          "log_price": {
+            "anchor_mean": 2.66614,
+            "synthetic_mean": 2.513861,
+            "standardized_mean_difference": -0.129294,
+            "ks_distance": 0.25
+          },
+          "price_missing": {
+            "anchor_mean": 0.15,
+            "synthetic_mean": 0.15,
+            "standardized_mean_difference": 0.0,
+            "ks_distance": 0.0
+          },
+          "metadata_complete": {
+            "anchor_mean": 1.0,
+            "synthetic_mean": 1.0,
+            "standardized_mean_difference": 0.0,
+            "ks_distance": 0.0
+          },
+          "metadata_richness": {
+            "anchor_mean": 15.3,
+            "synthetic_mean": 14.2,
+            "standardized_mean_difference": -0.2473,
+            "ks_distance": 0.35
+          },
+          "row_percentile": {
+            "anchor_mean": 0.108077,
+            "synthetic_mean": 0.111438,
+            "standardized_mean_difference": 0.015714,
+            "ks_distance": 0.2
+          },
+          "log_first_collision": {
+            "anchor_mean": 3.243276,
+            "synthetic_mean": 3.332074,
+            "standardized_mean_difference": 0.06595,
+            "ks_distance": 0.15
+          },
+          "log_pair_collision": {
+            "anchor_mean": 1.66822,
+            "synthetic_mean": 1.613294,
+            "standardized_mean_difference": -0.05814,
+            "ks_distance": 0.1
+          },
+          "log_triple_collision": {
+            "anchor_mean": 1.05598,
+            "synthetic_mean": 1.021322,
+            "standardized_mean_difference": -0.064807,
+            "ks_distance": 0.1
+          }
+        }
+      },
+      "targets": [
+        {
+          "sample_id": "robust_matched_0001",
+          "anchor_sample_id": "public_0008",
+          "anchor_parent_asin": "B0BPCC1KBT",
+          "target_parent_asin": "B00L5YKFA0",
+          "target_category": "bras everyday bras",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "head",
+          "target_constraint_type": "material",
+          "selection_mode": "matched",
+          "exact_category_match": true,
+          "match_distance": 0.866727,
+          "candidate_pool_size": 8,
+          "rating_number": 19946.0,
+          "average_rating": 4.1,
+          "price": 12.02,
+          "metadata_richness": 19.0,
+          "row_percentile": 0.00732,
+          "first_collision": 95,
+          "pair_collision": 1,
+          "triple_collision": 1,
+          "full_collision": 1
+        },
+        {
+          "sample_id": "robust_matched_0002",
+          "anchor_sample_id": "public_0169",
+          "anchor_parent_asin": "B0829R9M5G",
+          "target_parent_asin": "B08G1YP48X",
+          "target_category": "dresses casual",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "head",
+          "target_constraint_type": "material",
+          "selection_mode": "matched",
+          "exact_category_match": false,
+          "match_distance": 0.483598,
+          "candidate_pool_size": 8,
+          "rating_number": 8218.0,
+          "average_rating": 4.3,
+          "price": 21.52,
+          "metadata_richness": 15.0,
+          "row_percentile": 0.00622,
+          "first_collision": 98,
+          "pair_collision": 1,
+          "triple_collision": 1,
+          "full_collision": 1
+        },
+        {
+          "sample_id": "robust_matched_0003",
+          "anchor_sample_id": "public_0157",
+          "anchor_parent_asin": "B00BCHDM14",
+          "target_parent_asin": "B09GC1ZHD2",
+          "target_category": "bikinis sets",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "head",
+          "target_constraint_type": "material",
+          "selection_mode": "matched",
+          "exact_category_match": false,
+          "match_distance": 2.444487,
+          "candidate_pool_size": 8,
+          "rating_number": 7320.0,
+          "average_rating": 4.6,
+          "price": 10.59,
+          "metadata_richness": 14.0,
+          "row_percentile": 0.01506,
+          "first_collision": 35,
+          "pair_collision": 12,
+          "triple_collision": 7,
+          "full_collision": 1
+        },
+        {
+          "sample_id": "robust_matched_0004",
+          "anchor_sample_id": "public_0080",
+          "anchor_parent_asin": "B0BPRQY4CF",
+          "target_parent_asin": "B01C6SL1D8",
+          "target_category": "handbags & wallets crossbody bags",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "head",
+          "target_constraint_type": "material",
+          "selection_mode": "matched",
+          "exact_category_match": false,
+          "match_distance": 1.625155,
+          "candidate_pool_size": 8,
+          "rating_number": 13278.0,
+          "average_rating": 4.8,
+          "price": null,
+          "metadata_richness": 16.0,
+          "row_percentile": 0.01406,
+          "first_collision": 19,
+          "pair_collision": 7,
+          "triple_collision": 5,
+          "full_collision": 1
+        },
+        {
+          "sample_id": "robust_matched_0005",
+          "anchor_sample_id": "public_0116",
+          "anchor_parent_asin": "B07S2Y3THP",
+          "target_parent_asin": "B07DZCFPX7",
+          "target_category": "handbags & wallets totes",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "head",
+          "target_constraint_type": "feature",
+          "selection_mode": "matched",
+          "exact_category_match": false,
+          "match_distance": 1.314899,
+          "candidate_pool_size": 8,
+          "rating_number": 27582.0,
+          "average_rating": 4.5,
+          "price": 10.99,
+          "metadata_richness": 14.0,
+          "row_percentile": 0.01908,
+          "first_collision": 12,
+          "pair_collision": 5,
+          "triple_collision": 1,
+          "full_collision": 1
+        },
+        {
+          "sample_id": "robust_matched_0006",
+          "anchor_sample_id": "public_0023",
+          "anchor_parent_asin": "B08ZKFD4GM",
+          "target_parent_asin": "B09NNXKKG7",
+          "target_category": "shoes slippers",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "head",
+          "target_constraint_type": "feature",
+          "selection_mode": "matched",
+          "exact_category_match": false,
+          "match_distance": 1.948088,
+          "candidate_pool_size": 8,
+          "rating_number": 9511.0,
+          "average_rating": 4.4,
+          "price": 19.99,
+          "metadata_richness": 10.0,
+          "row_percentile": 0.00108,
+          "first_collision": 188,
+          "pair_collision": 1,
+          "triple_collision": 1,
+          "full_collision": 1
+        },
+        {
+          "sample_id": "robust_matched_0007",
+          "anchor_sample_id": "public_0115",
+          "anchor_parent_asin": "B08VWZBYPY",
+          "target_parent_asin": "B08DCWH1DT",
+          "target_category": "clothing sets short sets",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "head",
+          "target_constraint_type": "material",
+          "selection_mode": "matched",
+          "exact_category_match": false,
+          "match_distance": 0.980349,
+          "candidate_pool_size": 8,
+          "rating_number": 2910.0,
+          "average_rating": 4.6,
+          "price": 19.99,
+          "metadata_richness": 11.0,
+          "row_percentile": 0.0024,
+          "first_collision": 62,
+          "pair_collision": 15,
+          "triple_collision": 4,
+          "full_collision": 1
+        },
+        {
+          "sample_id": "robust_matched_0008",
+          "anchor_sample_id": "public_0152",
+          "anchor_parent_asin": "B000EQU0NW",
+          "target_parent_asin": "B075LZT3DL",
+          "target_category": "shirts t-shirts",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "head",
+          "target_constraint_type": "material",
+          "selection_mode": "matched",
+          "exact_category_match": false,
+          "match_distance": 5.161481,
+          "candidate_pool_size": 8,
+          "rating_number": 261.0,
+          "average_rating": 4.1,
+          "price": null,
+          "metadata_richness": 25.0,
+          "row_percentile": 0.01508,
+          "first_collision": 96,
+          "pair_collision": 13,
+          "triple_collision": 1,
+          "full_collision": 1
+        },
+        {
+          "sample_id": "robust_matched_0009",
+          "anchor_sample_id": "public_0069",
+          "anchor_parent_asin": "B07ZFBQ76H",
+          "target_parent_asin": "B07Y2ZYKRS",
+          "target_category": "luggage & travel gear travel accessories",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "head",
+          "target_constraint_type": "feature",
+          "selection_mode": "matched",
+          "exact_category_match": false,
+          "match_distance": 1.266875,
+          "candidate_pool_size": 8,
+          "rating_number": 4869.0,
+          "average_rating": 4.5,
+          "price": 16.99,
+          "metadata_richness": 13.0,
+          "row_percentile": 0.01256,
+          "first_collision": 1,
+          "pair_collision": 1,
+          "triple_collision": 1,
+          "full_collision": 1
+        },
+        {
+          "sample_id": "robust_matched_0010",
+          "anchor_sample_id": "public_0154",
+          "anchor_parent_asin": "B00CYNKSTE",
+          "target_parent_asin": "B075C6FX23",
+          "target_category": "tops & tees tanks & camis",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "middle",
+          "target_constraint_type": "material",
+          "selection_mode": "matched",
+          "exact_category_match": false,
+          "match_distance": 1.823287,
+          "candidate_pool_size": 8,
+          "rating_number": 80.0,
+          "average_rating": 4.6,
+          "price": 19.99,
+          "metadata_richness": 11.0,
+          "row_percentile": 0.084642,
+          "first_collision": 27,
+          "pair_collision": 5,
+          "triple_collision": 1,
+          "full_collision": 1
+        },
+        {
+          "sample_id": "robust_matched_0011",
+          "anchor_sample_id": "public_0168",
+          "anchor_parent_asin": "B08YYHDJD1",
+          "target_parent_asin": "B08CDMDGFW",
+          "target_category": "jewelry earrings",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "tail",
+          "target_constraint_type": "feature",
+          "selection_mode": "matched",
+          "exact_category_match": false,
+          "match_distance": 0.54118,
+          "candidate_pool_size": 8,
+          "rating_number": 498.0,
+          "average_rating": 4.4,
+          "price": 9.99,
+          "metadata_richness": 12.0,
+          "row_percentile": 0.317766,
+          "first_collision": 1,
+          "pair_collision": 1,
+          "triple_collision": 1,
+          "full_collision": 1
+        },
+        {
+          "sample_id": "robust_matched_0012",
+          "anchor_sample_id": "public_0076",
+          "anchor_parent_asin": "B07XT6PLTB",
+          "target_parent_asin": "B077NNK5YZ",
+          "target_category": "women jeans",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "head",
+          "target_constraint_type": "material",
+          "selection_mode": "matched",
+          "exact_category_match": false,
+          "match_distance": 1.65934,
+          "candidate_pool_size": 8,
+          "rating_number": 4.0,
+          "average_rating": 5.0,
+          "price": 45.51,
+          "metadata_richness": 13.0,
+          "row_percentile": 0.00334,
+          "first_collision": 210,
+          "pair_collision": 13,
+          "triple_collision": 6,
+          "full_collision": 3
+        },
+        {
+          "sample_id": "robust_matched_0013",
+          "anchor_sample_id": "public_0109",
+          "anchor_parent_asin": "B016OT9D3K",
+          "target_parent_asin": "B07BZ6T96P",
+          "target_category": "active shirts & tees tank tops",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "head",
+          "target_constraint_type": "material",
+          "selection_mode": "matched",
+          "exact_category_match": false,
+          "match_distance": 1.703676,
+          "candidate_pool_size": 8,
+          "rating_number": 44413.0,
+          "average_rating": 4.4,
+          "price": 23.99,
+          "metadata_richness": 14.0,
+          "row_percentile": 0.01152,
+          "first_collision": 28,
+          "pair_collision": 3,
+          "triple_collision": 2,
+          "full_collision": 1
+        },
+        {
+          "sample_id": "robust_matched_0014",
+          "anchor_sample_id": "public_0179",
+          "anchor_parent_asin": "B08JK818ZD",
+          "target_parent_asin": "B083SLLZNV",
+          "target_category": "sunglasses & eyewear accessories eyeglass cases",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "head",
+          "target_constraint_type": "material",
+          "selection_mode": "matched",
+          "exact_category_match": false,
+          "match_distance": 1.496707,
+          "candidate_pool_size": 8,
+          "rating_number": 148.0,
+          "average_rating": 4.8,
+          "price": 10.97,
+          "metadata_richness": 16.0,
+          "row_percentile": 0.00552,
+          "first_collision": 17,
+          "pair_collision": 5,
+          "triple_collision": 1,
+          "full_collision": 1
+        },
+        {
+          "sample_id": "robust_matched_0015",
+          "anchor_sample_id": "public_0195",
+          "anchor_parent_asin": "B072M4K5LF",
+          "target_parent_asin": "B09FPPKNLK",
+          "target_category": "men fashion hoodies & sweatshirts",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "tail",
+          "target_constraint_type": "material",
+          "selection_mode": "matched",
+          "exact_category_match": false,
+          "match_distance": 0.76793,
+          "candidate_pool_size": 8,
+          "rating_number": 558.0,
+          "average_rating": 4.3,
+          "price": 32.99,
+          "metadata_richness": 11.0,
+          "row_percentile": 0.563911,
+          "first_collision": 30,
+          "pair_collision": 13,
+          "triple_collision": 3,
+          "full_collision": 1
+        },
+        {
+          "sample_id": "robust_matched_0016",
+          "anchor_sample_id": "public_0170",
+          "anchor_parent_asin": "B08LRQX5RH",
+          "target_parent_asin": "B09X36FBL8",
+          "target_category": "dresses formal",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "head",
+          "target_constraint_type": "material",
+          "selection_mode": "matched",
+          "exact_category_match": false,
+          "match_distance": 3.03703,
+          "candidate_pool_size": 8,
+          "rating_number": 39.0,
+          "average_rating": 4.1,
+          "price": 29.99,
+          "metadata_richness": 13.0,
+          "row_percentile": 0.00118,
+          "first_collision": 56,
+          "pair_collision": 33,
+          "triple_collision": 2,
+          "full_collision": 2
+        },
+        {
+          "sample_id": "robust_matched_0017",
+          "anchor_sample_id": "public_0063",
+          "anchor_parent_asin": "B09MKL5TBK",
+          "target_parent_asin": "B09H227YL1",
+          "target_category": "tees & blouses tanks & camis",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "head",
+          "target_constraint_type": "material",
+          "selection_mode": "matched",
+          "exact_category_match": false,
+          "match_distance": 0.318686,
+          "candidate_pool_size": 8,
+          "rating_number": 4241.0,
+          "average_rating": 4.3,
+          "price": 21.39,
+          "metadata_richness": 13.0,
+          "row_percentile": 0.00754,
+          "first_collision": 11,
+          "pair_collision": 1,
+          "triple_collision": 1,
+          "full_collision": 1
+        },
+        {
+          "sample_id": "robust_matched_0018",
+          "anchor_sample_id": "public_0040",
+          "anchor_parent_asin": "B08ZJWTCDR",
+          "target_parent_asin": "B06Y45LQP3",
+          "target_category": "shirts polos",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "head",
+          "target_constraint_type": "material",
+          "selection_mode": "matched",
+          "exact_category_match": false,
+          "match_distance": 0.807116,
+          "candidate_pool_size": 8,
+          "rating_number": 22085.0,
+          "average_rating": 4.5,
+          "price": 13.0,
+          "metadata_richness": 20.0,
+          "row_percentile": 0.01126,
+          "first_collision": 43,
+          "pair_collision": 2,
+          "triple_collision": 2,
+          "full_collision": 2
+        },
+        {
+          "sample_id": "robust_matched_0019",
+          "anchor_sample_id": "public_0064",
+          "anchor_parent_asin": "B019DU687Q",
+          "target_parent_asin": "B07VZ1D6P4",
+          "target_category": "bras everyday bras",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "tail",
+          "target_constraint_type": "material",
+          "selection_mode": "matched",
+          "exact_category_match": false,
+          "match_distance": 1.32012,
+          "candidate_pool_size": 8,
+          "rating_number": 1331.0,
+          "average_rating": 4.0,
+          "price": null,
+          "metadata_richness": 12.0,
+          "row_percentile": 0.320546,
+          "first_collision": 36,
+          "pair_collision": 1,
+          "triple_collision": 1,
+          "full_collision": 1
+        },
+        {
+          "sample_id": "robust_matched_0020",
+          "anchor_sample_id": "public_0134",
+          "anchor_parent_asin": "B081SF3QRL",
+          "target_parent_asin": "B09CPPFYFT",
+          "target_category": "women accessories",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "tail",
+          "target_constraint_type": "feature",
+          "selection_mode": "matched",
+          "exact_category_match": false,
+          "match_distance": 0.084813,
+          "candidate_pool_size": 8,
+          "rating_number": 403.0,
+          "average_rating": 4.6,
+          "price": 18.99,
+          "metadata_richness": 12.0,
+          "row_percentile": 0.808676,
+          "first_collision": 1,
+          "pair_collision": 1,
+          "triple_collision": 1,
+          "full_collision": 1
+        }
+      ],
+      "evaluation": {
+        "sample_count": 20,
+        "hit_rate_at_10": 1.0,
+        "mrr": 1.0,
+        "mttc": 2.4,
+        "efficiency": 0.86,
+        "recommended_technical_score": 0.972,
+        "reported_token_usage": {
+          "prompt_tokens": 0,
+          "completion_tokens": 0,
+          "total_tokens": 0
+        },
+        "scenario_metrics": {
+          "boundary": {
+            "sample_count": 1,
+            "hit_rate_at_10": 1.0,
+            "mrr": 1.0,
+            "mttc": 3.0
+          },
+          "browsing": {
+            "sample_count": 8,
+            "hit_rate_at_10": 1.0,
+            "mrr": 1.0,
+            "mttc": 2.5
+          },
+          "buying": {
+            "sample_count": 8,
+            "hit_rate_at_10": 1.0,
+            "mrr": 1.0,
+            "mttc": 1.875
+          },
+          "intent_override": {
+            "sample_count": 3,
+            "hit_rate_at_10": 1.0,
+            "mrr": 1.0,
+            "mttc": 3.333333
+          }
+        },
+        "bootstrap_95_ci": {
+          "hit_rate_at_10": {
+            "lower_95": 1.0,
+            "upper_95": 1.0
+          },
+          "mrr": {
+            "lower_95": 1.0,
+            "upper_95": 1.0
+          },
+          "mttc": {
+            "lower_95": 2.2,
+            "upper_95": 2.65
+          },
+          "recommended_technical_score": {
+            "lower_95": 0.967,
+            "upper_95": 0.976
+          }
+        },
+        "subgroups": {
+          "popularity": {
+            "high": {
+              "sample_count": 5,
+              "hit_rate_at_10": 1.0,
+              "mrr": 1.0,
+              "mttc": 2.2,
+              "efficiency": 0.88,
+              "recommended_technical_score": 0.976
+            },
+            "low": {
+              "sample_count": 5,
+              "hit_rate_at_10": 1.0,
+              "mrr": 1.0,
+              "mttc": 2.6,
+              "efficiency": 0.84,
+              "recommended_technical_score": 0.968
+            },
+            "middle": {
+              "sample_count": 10,
+              "hit_rate_at_10": 1.0,
+              "mrr": 1.0,
+              "mttc": 2.4,
+              "efficiency": 0.86,
+              "recommended_technical_score": 0.972
+            }
+          },
+          "full_card_collision": {
+            "high": {
+              "sample_count": 3,
+              "hit_rate_at_10": 1.0,
+              "mrr": 1.0,
+              "mttc": 3.0,
+              "efficiency": 0.8,
+              "recommended_technical_score": 0.96
+            },
+            "low": {
+              "sample_count": 17,
+              "hit_rate_at_10": 1.0,
+              "mrr": 1.0,
+              "mttc": 2.294118,
+              "efficiency": 0.870588,
+              "recommended_technical_score": 0.974118
+            }
+          },
+          "catalog_row": {
+            "high": {
+              "sample_count": 5,
+              "hit_rate_at_10": 1.0,
+              "mrr": 1.0,
+              "mttc": 2.2,
+              "efficiency": 0.88,
+              "recommended_technical_score": 0.976
+            },
+            "low": {
+              "sample_count": 5,
+              "hit_rate_at_10": 1.0,
+              "mrr": 1.0,
+              "mttc": 3.0,
+              "efficiency": 0.8,
+              "recommended_technical_score": 0.96
+            },
+            "middle": {
+              "sample_count": 10,
+              "hit_rate_at_10": 1.0,
+              "mrr": 1.0,
+              "mttc": 2.2,
+              "efficiency": 0.88,
+              "recommended_technical_score": 0.976
+            }
+          }
+        },
+        "elapsed_seconds": 54.222,
+        "sessions": [
+          {
+            "sample_id": "robust_matched_0001",
+            "scenario_type": "buying",
+            "hit": true,
+            "first_hit_turn": 2,
+            "best_rank": 1,
+            "reciprocal_rank": 1.0
+          },
+          {
+            "sample_id": "robust_matched_0002",
+            "scenario_type": "boundary",
+            "hit": true,
+            "first_hit_turn": 3,
+            "best_rank": 1,
+            "reciprocal_rank": 1.0
+          },
+          {
+            "sample_id": "robust_matched_0003",
+            "scenario_type": "buying",
+            "hit": true,
+            "first_hit_turn": 2,
+            "best_rank": 1,
+            "reciprocal_rank": 1.0
+          },
+          {
+            "sample_id": "robust_matched_0004",
+            "scenario_type": "intent_override",
+            "hit": true,
+            "first_hit_turn": 3,
+            "best_rank": 1,
+            "reciprocal_rank": 1.0
+          },
+          {
+            "sample_id": "robust_matched_0005",
+            "scenario_type": "buying",
+            "hit": true,
+            "first_hit_turn": 2,
+            "best_rank": 1,
+            "reciprocal_rank": 1.0
+          },
+          {
+            "sample_id": "robust_matched_0006",
+            "scenario_type": "intent_override",
+            "hit": true,
+            "first_hit_turn": 4,
+            "best_rank": 1,
+            "reciprocal_rank": 1.0
+          },
+          {
+            "sample_id": "robust_matched_0007",
+            "scenario_type": "browsing",
+            "hit": true,
+            "first_hit_turn": 2,
+            "best_rank": 1,
+            "reciprocal_rank": 1.0
+          },
+          {
+            "sample_id": "robust_matched_0008",
+            "scenario_type": "buying",
+            "hit": true,
+            "first_hit_turn": 2,
+            "best_rank": 1,
+            "reciprocal_rank": 1.0
+          },
+          {
+            "sample_id": "robust_matched_0009",
+            "scenario_type": "browsing",
+            "hit": true,
+            "first_hit_turn": 2,
+            "best_rank": 1,
+            "reciprocal_rank": 1.0
+          },
+          {
+            "sample_id": "robust_matched_0010",
+            "scenario_type": "buying",
+            "hit": true,
+            "first_hit_turn": 2,
+            "best_rank": 1,
+            "reciprocal_rank": 1.0
+          },
+          {
+            "sample_id": "robust_matched_0011",
+            "scenario_type": "buying",
+            "hit": true,
+            "first_hit_turn": 1,
+            "best_rank": 1,
+            "reciprocal_rank": 1.0
+          },
+          {
+            "sample_id": "robust_matched_0012",
+            "scenario_type": "browsing",
+            "hit": true,
+            "first_hit_turn": 3,
+            "best_rank": 1,
+            "reciprocal_rank": 1.0
+          },
+          {
+            "sample_id": "robust_matched_0013",
+            "scenario_type": "buying",
+            "hit": true,
+            "first_hit_turn": 2,
+            "best_rank": 1,
+            "reciprocal_rank": 1.0
+          },
+          {
+            "sample_id": "robust_matched_0014",
+            "scenario_type": "buying",
+            "hit": true,
+            "first_hit_turn": 2,
+            "best_rank": 1,
+            "reciprocal_rank": 1.0
+          },
+          {
+            "sample_id": "robust_matched_0015",
+            "scenario_type": "browsing",
+            "hit": true,
+            "first_hit_turn": 3,
+            "best_rank": 1,
+            "reciprocal_rank": 1.0
+          },
+          {
+            "sample_id": "robust_matched_0016",
+            "scenario_type": "browsing",
+            "hit": true,
+            "first_hit_turn": 4,
+            "best_rank": 1,
+            "reciprocal_rank": 1.0
+          },
+          {
+            "sample_id": "robust_matched_0017",
+            "scenario_type": "browsing",
+            "hit": true,
+            "first_hit_turn": 2,
+            "best_rank": 1,
+            "reciprocal_rank": 1.0
+          },
+          {
+            "sample_id": "robust_matched_0018",
+            "scenario_type": "browsing",
+            "hit": true,
+            "first_hit_turn": 2,
+            "best_rank": 1,
+            "reciprocal_rank": 1.0
+          },
+          {
+            "sample_id": "robust_matched_0019",
+            "scenario_type": "intent_override",
+            "hit": true,
+            "first_hit_turn": 3,
+            "best_rank": 1,
+            "reciprocal_rank": 1.0
+          },
+          {
+            "sample_id": "robust_matched_0020",
+            "scenario_type": "browsing",
+            "hit": true,
+            "first_hit_turn": 2,
+            "best_rank": 1,
+            "reciprocal_rank": 1.0
+          }
+        ]
+      }
+    },
+    "collision_stress": {
+      "construction": "40% high intent-card collision targets within nearby product-covariate pools; 60% ordinary matched targets",
+      "profile_policy": "permute profiles within scenario; marginal distribution is unchanged",
+      "scenario_counts": {
+        "buying": 8,
+        "boundary": 1,
+        "intent_override": 3,
+        "browsing": 8
+      },
+      "calibration": {
+        "sample_count": 20,
+        "exact_leaf_category_match_rate": 0.05,
+        "broad_category_match_rate": 1.0,
+        "row_band_match_rate": 0.7,
+        "max_absolute_standardized_mean_difference": 1.066379,
+        "fields": {
+          "log_rating_number": {
+            "anchor_mean": 7.796315,
+            "synthetic_mean": 6.412775,
+            "standardized_mean_difference": -0.575601,
+            "ks_distance": 0.35
+          },
+          "average_rating": {
+            "anchor_mean": 4.365,
+            "synthetic_mean": 4.42,
+            "standardized_mean_difference": 0.200248,
+            "ks_distance": 0.25
+          },
+          "log_price": {
+            "anchor_mean": 2.66614,
+            "synthetic_mean": 2.576486,
+            "standardized_mean_difference": -0.07646,
+            "ks_distance": 0.25
+          },
+          "price_missing": {
+            "anchor_mean": 0.15,
+            "synthetic_mean": 0.15,
+            "standardized_mean_difference": 0.0,
+            "ks_distance": 0.0
+          },
+          "metadata_complete": {
+            "anchor_mean": 1.0,
+            "synthetic_mean": 1.0,
+            "standardized_mean_difference": 0.0,
+            "ks_distance": 0.0
+          },
+          "metadata_richness": {
+            "anchor_mean": 15.3,
+            "synthetic_mean": 14.45,
+            "standardized_mean_difference": -0.21035,
+            "ks_distance": 0.25
+          },
+          "row_percentile": {
+            "anchor_mean": 0.108077,
+            "synthetic_mean": 0.149659,
+            "standardized_mean_difference": 0.195766,
+            "ks_distance": 0.3
+          },
+          "log_first_collision": {
+            "anchor_mean": 3.243276,
+            "synthetic_mean": 4.524791,
+            "standardized_mean_difference": 0.82625,
+            "ks_distance": 0.45
+          },
+          "log_pair_collision": {
+            "anchor_mean": 1.66822,
+            "synthetic_mean": 3.265094,
+            "standardized_mean_difference": 0.942441,
+            "ks_distance": 0.4
+          },
+          "log_triple_collision": {
+            "anchor_mean": 1.05598,
+            "synthetic_mean": 2.852803,
+            "standardized_mean_difference": 1.066379,
+            "ks_distance": 0.4
+          }
+        }
+      },
+      "targets": [
+        {
+          "sample_id": "robust_collision_stress_0001",
+          "anchor_sample_id": "public_0008",
+          "anchor_parent_asin": "B0BPCC1KBT",
+          "target_parent_asin": "B07VFPS68P",
+          "target_category": "bras sports bras",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "head",
+          "target_constraint_type": "material",
+          "selection_mode": "matched",
+          "exact_category_match": false,
+          "match_distance": 1.865792,
+          "candidate_pool_size": 8,
+          "rating_number": 35358.0,
+          "average_rating": 4.1,
+          "price": 35.25,
+          "metadata_richness": 16.0,
+          "row_percentile": 0.00664,
+          "first_collision": 34,
+          "pair_collision": 1,
+          "triple_collision": 1,
+          "full_collision": 1
+        },
+        {
+          "sample_id": "robust_collision_stress_0002",
+          "anchor_sample_id": "public_0169",
+          "anchor_parent_asin": "B0829R9M5G",
+          "target_parent_asin": "B0722HX61L",
+          "target_category": "tops & tees t-shirts",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "tail",
+          "target_constraint_type": "material",
+          "selection_mode": "ambiguous",
+          "exact_category_match": false,
+          "match_distance": 13.577434,
+          "candidate_pool_size": 128,
+          "rating_number": 444.0,
+          "average_rating": 4.8,
+          "price": 23.5,
+          "metadata_richness": 15.0,
+          "row_percentile": 0.268965,
+          "first_collision": 518,
+          "pair_collision": 299,
+          "triple_collision": 264,
+          "full_collision": 264
+        },
+        {
+          "sample_id": "robust_collision_stress_0003",
+          "anchor_sample_id": "public_0157",
+          "anchor_parent_asin": "B00BCHDM14",
+          "target_parent_asin": "B07171ZGRW",
+          "target_category": "shirts t-shirts",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "middle",
+          "target_constraint_type": "material",
+          "selection_mode": "ambiguous",
+          "exact_category_match": false,
+          "match_distance": 8.321092,
+          "candidate_pool_size": 128,
+          "rating_number": 300.0,
+          "average_rating": 4.6,
+          "price": 14.95,
+          "metadata_richness": 13.0,
+          "row_percentile": 0.089782,
+          "first_collision": 1004,
+          "pair_collision": 604,
+          "triple_collision": 394,
+          "full_collision": 111
+        },
+        {
+          "sample_id": "robust_collision_stress_0004",
+          "anchor_sample_id": "public_0080",
+          "anchor_parent_asin": "B0BPRQY4CF",
+          "target_parent_asin": "B07PW4T128",
+          "target_category": "shirts polos",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "head",
+          "target_constraint_type": "material",
+          "selection_mode": "matched",
+          "exact_category_match": true,
+          "match_distance": 4.44202,
+          "candidate_pool_size": 8,
+          "rating_number": 2264.0,
+          "average_rating": 4.5,
+          "price": null,
+          "metadata_richness": 17.0,
+          "row_percentile": 0.00474,
+          "first_collision": 72,
+          "pair_collision": 5,
+          "triple_collision": 5,
+          "full_collision": 5
+        },
+        {
+          "sample_id": "robust_collision_stress_0005",
+          "anchor_sample_id": "public_0116",
+          "anchor_parent_asin": "B07S2Y3THP",
+          "target_parent_asin": "B076CCG8X5",
+          "target_category": "tops & tees t-shirts",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "tail",
+          "target_constraint_type": "material",
+          "selection_mode": "ambiguous",
+          "exact_category_match": false,
+          "match_distance": 35.519383,
+          "candidate_pool_size": 128,
+          "rating_number": 68.0,
+          "average_rating": 4.5,
+          "price": 17.99,
+          "metadata_richness": 14.0,
+          "row_percentile": 0.269765,
+          "first_collision": 518,
+          "pair_collision": 299,
+          "triple_collision": 264,
+          "full_collision": 264
+        },
+        {
+          "sample_id": "robust_collision_stress_0006",
+          "anchor_sample_id": "public_0023",
+          "anchor_parent_asin": "B08ZKFD4GM",
+          "target_parent_asin": "B071Z9PCLK",
+          "target_category": "tops & tees t-shirts",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "middle",
+          "target_constraint_type": "material",
+          "selection_mode": "ambiguous",
+          "exact_category_match": false,
+          "match_distance": 36.878102,
+          "candidate_pool_size": 128,
+          "rating_number": 59.0,
+          "average_rating": 4.6,
+          "price": 14.95,
+          "metadata_richness": 12.0,
+          "row_percentile": 0.178524,
+          "first_collision": 518,
+          "pair_collision": 299,
+          "triple_collision": 264,
+          "full_collision": 264
+        },
+        {
+          "sample_id": "robust_collision_stress_0007",
+          "anchor_sample_id": "public_0115",
+          "anchor_parent_asin": "B08VWZBYPY",
+          "target_parent_asin": "B08ZL3FV14",
+          "target_category": "shirts dress shirts",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "head",
+          "target_constraint_type": "material",
+          "selection_mode": "matched",
+          "exact_category_match": false,
+          "match_distance": 0.622483,
+          "candidate_pool_size": 8,
+          "rating_number": 3285.0,
+          "average_rating": 4.3,
+          "price": 21.99,
+          "metadata_richness": 14.0,
+          "row_percentile": 0.01436,
+          "first_collision": 63,
+          "pair_collision": 10,
+          "triple_collision": 8,
+          "full_collision": 8
+        },
+        {
+          "sample_id": "robust_collision_stress_0008",
+          "anchor_sample_id": "public_0152",
+          "anchor_parent_asin": "B000EQU0NW",
+          "target_parent_asin": "B094S49FB2",
+          "target_category": "shoes boots",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "head",
+          "target_constraint_type": "material",
+          "selection_mode": "matched",
+          "exact_category_match": false,
+          "match_distance": 9.317131,
+          "candidate_pool_size": 8,
+          "rating_number": 1153.0,
+          "average_rating": 4.8,
+          "price": null,
+          "metadata_richness": 22.0,
+          "row_percentile": 0.0017,
+          "first_collision": 107,
+          "pair_collision": 2,
+          "triple_collision": 1,
+          "full_collision": 1
+        },
+        {
+          "sample_id": "robust_collision_stress_0009",
+          "anchor_sample_id": "public_0069",
+          "anchor_parent_asin": "B07ZFBQ76H",
+          "target_parent_asin": "B072851VM1",
+          "target_category": "tops & tees t-shirts",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "middle",
+          "target_constraint_type": "material",
+          "selection_mode": "ambiguous",
+          "exact_category_match": false,
+          "match_distance": 15.25416,
+          "candidate_pool_size": 128,
+          "rating_number": 63.0,
+          "average_rating": 4.7,
+          "price": 19.95,
+          "metadata_richness": 14.0,
+          "row_percentile": 0.180424,
+          "first_collision": 518,
+          "pair_collision": 299,
+          "triple_collision": 264,
+          "full_collision": 264
+        },
+        {
+          "sample_id": "robust_collision_stress_0010",
+          "anchor_sample_id": "public_0154",
+          "anchor_parent_asin": "B00CYNKSTE",
+          "target_parent_asin": "B075MP5V6J",
+          "target_category": "tops & tees t-shirts",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "middle",
+          "target_constraint_type": "material",
+          "selection_mode": "ambiguous",
+          "exact_category_match": false,
+          "match_distance": 3.61697,
+          "candidate_pool_size": 128,
+          "rating_number": 14.0,
+          "average_rating": 4.1,
+          "price": 16.99,
+          "metadata_richness": 11.0,
+          "row_percentile": 0.02062,
+          "first_collision": 518,
+          "pair_collision": 299,
+          "triple_collision": 264,
+          "full_collision": 264
+        },
+        {
+          "sample_id": "robust_collision_stress_0011",
+          "anchor_sample_id": "public_0168",
+          "anchor_parent_asin": "B08YYHDJD1",
+          "target_parent_asin": "B08LN5QB5V",
+          "target_category": "jewelry bracelets",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "tail",
+          "target_constraint_type": "feature",
+          "selection_mode": "matched",
+          "exact_category_match": false,
+          "match_distance": 0.556391,
+          "candidate_pool_size": 8,
+          "rating_number": 1438.0,
+          "average_rating": 4.3,
+          "price": 9.99,
+          "metadata_richness": 15.0,
+          "row_percentile": 0.204924,
+          "first_collision": 1,
+          "pair_collision": 1,
+          "triple_collision": 1,
+          "full_collision": 1
+        },
+        {
+          "sample_id": "robust_collision_stress_0012",
+          "anchor_sample_id": "public_0076",
+          "anchor_parent_asin": "B07XT6PLTB",
+          "target_parent_asin": "B076M883RN",
+          "target_category": "tops & tees t-shirts",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "middle",
+          "target_constraint_type": "material",
+          "selection_mode": "ambiguous",
+          "exact_category_match": false,
+          "match_distance": 0.235984,
+          "candidate_pool_size": 128,
+          "rating_number": 3.0,
+          "average_rating": 5.0,
+          "price": 16.99,
+          "metadata_richness": 14.0,
+          "row_percentile": 0.034001,
+          "first_collision": 518,
+          "pair_collision": 299,
+          "triple_collision": 264,
+          "full_collision": 264
+        },
+        {
+          "sample_id": "robust_collision_stress_0013",
+          "anchor_sample_id": "public_0109",
+          "anchor_parent_asin": "B016OT9D3K",
+          "target_parent_asin": "B073DYJ2V1",
+          "target_category": "hats & caps baseball caps",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "head",
+          "target_constraint_type": "material",
+          "selection_mode": "matched",
+          "exact_category_match": false,
+          "match_distance": 1.537553,
+          "candidate_pool_size": 8,
+          "rating_number": 30704.0,
+          "average_rating": 4.6,
+          "price": 22.95,
+          "metadata_richness": 13.0,
+          "row_percentile": 0.00652,
+          "first_collision": 8,
+          "pair_collision": 1,
+          "triple_collision": 1,
+          "full_collision": 1
+        },
+        {
+          "sample_id": "robust_collision_stress_0014",
+          "anchor_sample_id": "public_0179",
+          "anchor_parent_asin": "B08JK818ZD",
+          "target_parent_asin": "B0BLRY959B",
+          "target_category": "sleep & lounge one-piece pajamas",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "head",
+          "target_constraint_type": "material",
+          "selection_mode": "matched",
+          "exact_category_match": false,
+          "match_distance": 1.333896,
+          "candidate_pool_size": 8,
+          "rating_number": 594.0,
+          "average_rating": 4.2,
+          "price": 25.99,
+          "metadata_richness": 14.0,
+          "row_percentile": 0.00154,
+          "first_collision": 10,
+          "pair_collision": 6,
+          "triple_collision": 1,
+          "full_collision": 1
+        },
+        {
+          "sample_id": "robust_collision_stress_0015",
+          "anchor_sample_id": "public_0195",
+          "anchor_parent_asin": "B072M4K5LF",
+          "target_parent_asin": "B0855WRV43",
+          "target_category": "swimsuits & cover ups cover-ups",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "tail",
+          "target_constraint_type": "material",
+          "selection_mode": "matched",
+          "exact_category_match": false,
+          "match_distance": 1.19515,
+          "candidate_pool_size": 8,
+          "rating_number": 584.0,
+          "average_rating": 4.4,
+          "price": 24.99,
+          "metadata_richness": 13.0,
+          "row_percentile": 0.48467,
+          "first_collision": 61,
+          "pair_collision": 30,
+          "triple_collision": 5,
+          "full_collision": 1
+        },
+        {
+          "sample_id": "robust_collision_stress_0016",
+          "anchor_sample_id": "public_0170",
+          "anchor_parent_asin": "B08LRQX5RH",
+          "target_parent_asin": "B09N76ZKV1",
+          "target_category": "sandals slides",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "head",
+          "target_constraint_type": "material",
+          "selection_mode": "matched",
+          "exact_category_match": false,
+          "match_distance": 2.860524,
+          "candidate_pool_size": 8,
+          "rating_number": 285.0,
+          "average_rating": 3.8,
+          "price": 20.99,
+          "metadata_richness": 11.0,
+          "row_percentile": 0.00382,
+          "first_collision": 68,
+          "pair_collision": 20,
+          "triple_collision": 1,
+          "full_collision": 1
+        },
+        {
+          "sample_id": "robust_collision_stress_0017",
+          "anchor_sample_id": "public_0063",
+          "anchor_parent_asin": "B09MKL5TBK",
+          "target_parent_asin": "B07JP5ZBFD",
+          "target_category": "tees & blouses polos",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "head",
+          "target_constraint_type": "material",
+          "selection_mode": "matched",
+          "exact_category_match": false,
+          "match_distance": 0.809971,
+          "candidate_pool_size": 8,
+          "rating_number": 4086.0,
+          "average_rating": 4.1,
+          "price": 19.0,
+          "metadata_richness": 14.0,
+          "row_percentile": 0.01588,
+          "first_collision": 11,
+          "pair_collision": 1,
+          "triple_collision": 1,
+          "full_collision": 1
+        },
+        {
+          "sample_id": "robust_collision_stress_0018",
+          "anchor_sample_id": "public_0040",
+          "anchor_parent_asin": "B08ZJWTCDR",
+          "target_parent_asin": "B0735V67KT",
+          "target_category": "active athletic socks",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "head",
+          "target_constraint_type": "material",
+          "selection_mode": "matched",
+          "exact_category_match": false,
+          "match_distance": 0.187004,
+          "candidate_pool_size": 8,
+          "rating_number": 30153.0,
+          "average_rating": 4.5,
+          "price": 16.99,
+          "metadata_richness": 17.0,
+          "row_percentile": 0.00128,
+          "first_collision": 72,
+          "pair_collision": 3,
+          "triple_collision": 1,
+          "full_collision": 1
+        },
+        {
+          "sample_id": "robust_collision_stress_0019",
+          "anchor_sample_id": "public_0064",
+          "anchor_parent_asin": "B019DU687Q",
+          "target_parent_asin": "B01MXJH64T",
+          "target_category": "outdoor & work hiking & trekking",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "tail",
+          "target_constraint_type": "material",
+          "selection_mode": "matched",
+          "exact_category_match": false,
+          "match_distance": 1.323642,
+          "candidate_pool_size": 8,
+          "rating_number": 941.0,
+          "average_rating": 3.9,
+          "price": null,
+          "metadata_richness": 15.0,
+          "row_percentile": 0.341787,
+          "first_collision": 14,
+          "pair_collision": 2,
+          "triple_collision": 1,
+          "full_collision": 1
+        },
+        {
+          "sample_id": "robust_collision_stress_0020",
+          "anchor_sample_id": "public_0134",
+          "anchor_parent_asin": "B081SF3QRL",
+          "target_parent_asin": "B076H9Z2WZ",
+          "target_category": "tops & tees t-shirts",
+          "target_broad_category": "shoes & jewelry",
+          "target_row_band": "tail",
+          "target_constraint_type": "material",
+          "selection_mode": "ambiguous",
+          "exact_category_match": false,
+          "match_distance": 1.513839,
+          "candidate_pool_size": 128,
+          "rating_number": 151.0,
+          "average_rating": 4.6,
+          "price": 23.5,
+          "metadata_richness": 15.0,
+          "row_percentile": 0.863237,
+          "first_collision": 518,
+          "pair_collision": 299,
+          "triple_collision": 264,
+          "full_collision": 264
+        }
+      ],
+      "evaluation": {
+        "sample_count": 20,
+        "hit_rate_at_10": 0.7,
+        "mrr": 0.567143,
+        "mttc": 5.7,
+        "efficiency": 0.53,
+        "recommended_technical_score": 0.626143,
+        "reported_token_usage": {
+          "prompt_tokens": 0,
+          "completion_tokens": 0,
+          "total_tokens": 0
+        },
+        "scenario_metrics": {
+          "boundary": {
+            "sample_count": 1,
+            "hit_rate_at_10": 0.0,
+            "mrr": 0.0,
+            "mttc": 11.0
+          },
+          "browsing": {
+            "sample_count": 8,
+            "hit_rate_at_10": 0.625,
+            "mrr": 0.5,
+            "mttc": 5.375
+          },
+          "buying": {
+            "sample_count": 8,
+            "hit_rate_at_10": 0.875,
+            "mrr": 0.667857,
+            "mttc": 5.0
+          },
+          "intent_override": {
+            "sample_count": 3,
+            "hit_rate_at_10": 0.666667,
+            "mrr": 0.666667,
+            "mttc": 6.666667
+          }
+        },
+        "bootstrap_95_ci": {
+          "hit_rate_at_10": {
+            "lower_95": 0.5,
+            "upper_95": 0.85
+          },
+          "mrr": {
+            "lower_95": 0.374286,
+            "upper_95": 0.742143
+          },
+          "mttc": {
+            "lower_95": 4.0,
+            "upper_95": 7.45
+          },
+          "recommended_technical_score": {
+            "lower_95": 0.447774,
+            "upper_95": 0.7835
+          }
+        },
+        "subgroups": {
+          "popularity": {
+            "high": {
+              "sample_count": 5,
+              "hit_rate_at_10": 1.0,
+              "mrr": 0.9,
+              "mttc": 2.0,
+              "efficiency": 0.9,
+              "recommended_technical_score": 0.95
+            },
+            "low": {
+              "sample_count": 5,
+              "hit_rate_at_10": 0.2,
+              "mrr": 0.04,
+              "mttc": 10.8,
+              "efficiency": 0.02,
+              "recommended_technical_score": 0.116
+            },
+            "middle": {
+              "sample_count": 10,
+              "hit_rate_at_10": 0.8,
+              "mrr": 0.664286,
+              "mttc": 5.0,
+              "efficiency": 0.6,
+              "recommended_technical_score": 0.719286
+            }
+          },
+          "full_card_collision": {
+            "high": {
+              "sample_count": 7,
+              "hit_rate_at_10": 0.142857,
+              "mrr": 0.028571,
+              "mttc": 10.857143,
+              "efficiency": 0.014286,
+              "recommended_technical_score": 0.082857
+            },
+            "low": {
+              "sample_count": 10,
+              "hit_rate_at_10": 1.0,
+              "mrr": 0.95,
+              "mttc": 2.1,
+              "efficiency": 0.89,
+              "recommended_technical_score": 0.963
+            },
+            "middle": {
+              "sample_count": 3,
+              "hit_rate_at_10": 1.0,
+              "mrr": 0.547619,
+              "mttc": 5.666667,
+              "efficiency": 0.533333,
+              "recommended_technical_score": 0.770952
+            }
+          },
+          "catalog_row": {
+            "high": {
+              "sample_count": 5,
+              "hit_rate_at_10": 0.4,
+              "mrr": 0.3,
+              "mttc": 7.8,
+              "efficiency": 0.32,
+              "recommended_technical_score": 0.354
+            },
+            "low": {
+              "sample_count": 5,
+              "hit_rate_at_10": 1.0,
+              "mrr": 1.0,
+              "mttc": 2.6,
+              "efficiency": 0.84,
+              "recommended_technical_score": 0.968
+            },
+            "middle": {
+              "sample_count": 10,
+              "hit_rate_at_10": 0.7,
+              "mrr": 0.484286,
+              "mttc": 6.2,
+              "efficiency": 0.48,
+              "recommended_technical_score": 0.591286
+            }
+          }
+        },
+        "elapsed_seconds": 39.69,
+        "sessions": [
+          {
+            "sample_id": "robust_collision_stress_0001",
+            "scenario_type": "buying",
+            "hit": true,
+            "first_hit_turn": 2,
+            "best_rank": 1,
+            "reciprocal_rank": 1.0
+          },
+          {
+            "sample_id": "robust_collision_stress_0002",
+            "scenario_type": "boundary",
+            "hit": false,
+            "first_hit_turn": null,
+            "best_rank": null,
+            "reciprocal_rank": 0.0
+          },
+          {
+            "sample_id": "robust_collision_stress_0003",
+            "scenario_type": "buying",
+            "hit": true,
+            "first_hit_turn": 10,
+            "best_rank": 7,
+            "reciprocal_rank": 0.14285714285714285
+          },
+          {
+            "sample_id": "robust_collision_stress_0004",
+            "scenario_type": "intent_override",
+            "hit": true,
+            "first_hit_turn": 5,
+            "best_rank": 1,
+            "reciprocal_rank": 1.0
+          },
+          {
+            "sample_id": "robust_collision_stress_0005",
+            "scenario_type": "buying",
+            "hit": false,
+            "first_hit_turn": null,
+            "best_rank": null,
+            "reciprocal_rank": 0.0
+          },
+          {
+            "sample_id": "robust_collision_stress_0006",
+            "scenario_type": "intent_override",
+            "hit": false,
+            "first_hit_turn": null,
+            "best_rank": null,
+            "reciprocal_rank": 0.0
+          },
+          {
+            "sample_id": "robust_collision_stress_0007",
+            "scenario_type": "browsing",
+            "hit": true,
+            "first_hit_turn": 2,
+            "best_rank": 2,
+            "reciprocal_rank": 0.5
+          },
+          {
+            "sample_id": "robust_collision_stress_0008",
+            "scenario_type": "buying",
+            "hit": true,
+            "first_hit_turn": 2,
+            "best_rank": 1,
+            "reciprocal_rank": 1.0
+          },
+          {
+            "sample_id": "robust_collision_stress_0009",
+            "scenario_type": "browsing",
+            "hit": false,
+            "first_hit_turn": null,
+            "best_rank": null,
+            "reciprocal_rank": 0.0
+          },
+          {
+            "sample_id": "robust_collision_stress_0010",
+            "scenario_type": "buying",
+            "hit": true,
+            "first_hit_turn": 10,
+            "best_rank": 5,
+            "reciprocal_rank": 0.2
+          },
+          {
+            "sample_id": "robust_collision_stress_0011",
+            "scenario_type": "buying",
+            "hit": true,
+            "first_hit_turn": 1,
+            "best_rank": 1,
+            "reciprocal_rank": 1.0
+          },
+          {
+            "sample_id": "robust_collision_stress_0012",
+            "scenario_type": "browsing",
+            "hit": false,
+            "first_hit_turn": null,
+            "best_rank": null,
+            "reciprocal_rank": 0.0
+          },
+          {
+            "sample_id": "robust_collision_stress_0013",
+            "scenario_type": "buying",
+            "hit": true,
+            "first_hit_turn": 2,
+            "best_rank": 1,
+            "reciprocal_rank": 1.0
+          },
+          {
+            "sample_id": "robust_collision_stress_0014",
+            "scenario_type": "buying",
+            "hit": true,
+            "first_hit_turn": 2,
+            "best_rank": 1,
+            "reciprocal_rank": 1.0
+          },
+          {
+            "sample_id": "robust_collision_stress_0015",
+            "scenario_type": "browsing",
+            "hit": true,
+            "first_hit_turn": 2,
+            "best_rank": 2,
+            "reciprocal_rank": 0.5
+          },
+          {
+            "sample_id": "robust_collision_stress_0016",
+            "scenario_type": "browsing",
+            "hit": true,
+            "first_hit_turn": 2,
+            "best_rank": 1,
+            "reciprocal_rank": 1.0
+          },
+          {
+            "sample_id": "robust_collision_stress_0017",
+            "scenario_type": "browsing",
+            "hit": true,
+            "first_hit_turn": 2,
+            "best_rank": 1,
+            "reciprocal_rank": 1.0
+          },
+          {
+            "sample_id": "robust_collision_stress_0018",
+            "scenario_type": "browsing",
+            "hit": true,
+            "first_hit_turn": 2,
+            "best_rank": 1,
+            "reciprocal_rank": 1.0
+          },
+          {
+            "sample_id": "robust_collision_stress_0019",
+            "scenario_type": "intent_override",
+            "hit": true,
+            "first_hit_turn": 4,
+            "best_rank": 1,
+            "reciprocal_rank": 1.0
+          },
+          {
+            "sample_id": "robust_collision_stress_0020",
+            "scenario_type": "browsing",
+            "hit": false,
+            "first_hit_turn": null,
+            "best_rank": null,
+            "reciprocal_rank": 0.0
+          }
+        ]
+      }
+    }
+  },
+  "pooled_evaluation": {
+    "sample_count": 40,
+    "hit_rate_at_10": 0.85,
+    "mrr": 0.783571,
+    "mttc": 4.05,
+    "efficiency": 0.695,
+    "recommended_technical_score": 0.799071,
+    "bootstrap_95_ci": {
+      "hit_rate_at_10": {
+        "lower_95": 0.75,
+        "upper_95": 0.95
+      },
+      "mrr": {
+        "lower_95": 0.658187,
+        "upper_95": 0.8925
+      },
+      "mttc": {
+        "lower_95": 3.1,
+        "upper_95": 5.125
+      },
+      "recommended_technical_score": {
+        "lower_95": 0.68681,
+        "upper_95": 0.899146
+      }
+    }
+  },
+  "total_elapsed_seconds": 214.102
+}

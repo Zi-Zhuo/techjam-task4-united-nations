@@ -1,0 +1,121 @@
+{
+  "sample_count": 8,
+  "hit_rate_at_10": 1.0,
+  "mrr": 0.9375,
+  "mttc": 2.0,
+  "efficiency": 0.9,
+  "recommended_technical_score": 0.96125,
+  "reported_token_usage": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0
+  },
+  "scenario_metrics": {
+    "browsing": {
+      "sample_count": 3,
+      "hit_rate_at_10": 1.0,
+      "mrr": 1.0,
+      "mttc": 2.0
+    },
+    "buying": {
+      "sample_count": 4,
+      "hit_rate_at_10": 1.0,
+      "mrr": 0.875,
+      "mttc": 1.5
+    },
+    "intent_override": {
+      "sample_count": 1,
+      "hit_rate_at_10": 1.0,
+      "mrr": 1.0,
+      "mttc": 4.0
+    }
+  },
+  "sessions": [
+    {
+      "sample_id": "public_0161",
+      "scenario_type": "buying",
+      "hit": true,
+      "first_hit_turn": 3,
+      "best_rank": 1,
+      "reciprocal_rank": 1.0
+    },
+    {
+      "sample_id": "public_0163",
+      "scenario_type": "buying",
+      "hit": true,
+      "first_hit_turn": 1,
+      "best_rank": 2,
+      "reciprocal_rank": 0.5
+    },
+    {
+      "sample_id": "public_0165",
+      "scenario_type": "buying",
+      "hit": true,
+      "first_hit_turn": 1,
+      "best_rank": 1,
+      "reciprocal_rank": 1.0
+    },
+    {
+      "sample_id": "public_0168",
+      "scenario_type": "buying",
+      "hit": true,
+      "first_hit_turn": 1,
+      "best_rank": 1,
+      "reciprocal_rank": 1.0
+    },
+    {
+      "sample_id": "public_0153",
+      "scenario_type": "browsing",
+      "hit": true,
+      "first_hit_turn": 2,
+      "best_rank": 1,
+      "reciprocal_rank": 1.0
+    },
+    {
+      "sample_id": "public_0158",
+      "scenario_type": "browsing",
+      "hit": true,
+      "first_hit_turn": 2,
+      "best_rank": 1,
+      "reciprocal_rank": 1.0
+    },
+    {
+      "sample_id": "public_0162",
+      "scenario_type": "browsing",
+      "hit": true,
+      "first_hit_turn": 2,
+      "best_rank": 1,
+      "reciprocal_rank": 1.0
+    },
+    {
+      "sample_id": "public_0166",
+      "scenario_type": "intent_override",
+      "hit": true,
+      "first_hit_turn": 4,
+      "best_rank": 1,
+      "reciprocal_rank": 1.0
+    }
+  ],
+  "subset": {
+    "sample_count": 8,
+    "offset_per_scenario": 160,
+    "scenario_counts": {
+      "browsing": 3,
+      "buying": 4,
+      "intent_override": 1
+    },
+    "sample_ids": [
+      "public_0161",
+      "public_0163",
+      "public_0165",
+      "public_0168",
+      "public_0153",
+      "public_0158",
+      "public_0162",
+      "public_0166"
+    ],
+    "model_name": "sentence-transformers/all-MiniLM-L6-v2",
+    "device": "cpu",
+    "elapsed_seconds": 65.893
+  }
+}

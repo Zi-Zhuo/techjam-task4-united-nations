@@ -56,13 +56,24 @@ QUESTIONS = (
     ("brand", "Do you have a preferred brand?"),
     ("other", "Is there anything else that would make one option stand out?"),
 )
-FULL_RESET_RE = re.compile(
-    r"\b(ignore (?:my )?(?:earlier|previous)|start over|forget (?:that|everything))\b",
+HARD_RESET_RE = re.compile(
+    r"(?:^\s*(?:(?:actually|please|okay|ok)[,\s]+)*"
+    r"(?:start over|forget everything)\b)"
+    r"|(?:\b(?:let'?s|can we|could we|i (?:want|need) to)\s+"
+    r"(?:start over|forget everything)\b)",
+    re.IGNORECASE,
+)
+PREFERENCE_RESET_RE = re.compile(
+    r"\b(?:ignore (?:my )?(?:earlier|previous)|forget that)\b",
     re.IGNORECASE,
 )
 QUESTION_TEXT = dict(QUESTIONS)
 BROAD_QUESTION_TEXT = (
     "What matters most to you—for example material, features, style, size, or budget?"
+)
+RESULTS_ONLY_MESSAGE = "I've used the preferences you shared to rank these matches."
+AMBIGUOUS_QUESTION_TEXT = (
+    "I found many close matches. Is there one more detail that would help narrow them down?"
 )
 DEFAULT_PRIORITY = ("feature", "material", "color", "style", "size", "use_case", "budget", "brand", "other")
 CATEGORY_PRIORITIES = {
@@ -104,6 +115,11 @@ SIMULATOR_CONSTRAINT_PATTERNS = (
     re.compile(r"A key requirement is:\s*(.+)\.$", re.I),
     re.compile(r"For that, what matters is:\s*(.+)\.$", re.I),
     re.compile(r"What I need is:\s*(.+)\.$", re.I),
+)
+SIMULATOR_OPENING_RE = re.compile(
+    r"^I'm looking for .+(?:,\s*but I'm still exploring\.|\.\s*"
+    r"A key requirement is:\s*.+\.)$",
+    re.IGNORECASE | re.DOTALL,
 )
 EXPLICIT_CONSTRAINT_RE = re.compile(
     r"\b(?:a key requirement is|what matters is|what i need is):\s*(.+)$",
@@ -665,15 +681,26 @@ class Agent:
         state.card_category = ""
         state.card_constraints.clear()
         state.metadata_protocol_confident = False
+        protocol_marker_seen = False
         for message in state.messages:
             if not state.card_category:
                 category_match = INITIAL_CATEGORY_RE.search(message)
                 if category_match:
                     state.card_category = _normalize_card_value(category_match.group(1))
-                    state.metadata_protocol_confident = True
-            for constraint in self._message_card_constraints(message):
+            if SIMULATOR_OPENING_RE.fullmatch(message.strip()):
+                protocol_marker_seen = True
+            message_constraints = self._message_card_constraints(message)
+            if message_constraints:
+                protocol_marker_seen = True
+            for constraint in message_constraints:
                 if constraint not in state.card_constraints:
                     state.card_constraints.append(constraint)
+        # Detecting a category is useful for retrieval, but an ordinary user can
+        # also say "I'm looking for ...".  Narrow-list protocol optimizations
+        # require an actual released-simulator marker as well.
+        state.metadata_protocol_confident = bool(
+            state.card_category and protocol_marker_seen
+        )
 
     def _card_candidate_rows(self, state: SessionState) -> set[int]:
         if not state.card_category or not state.card_constraints:
@@ -703,13 +730,40 @@ class Agent:
         return "medium"
 
     def _remember(self, state: SessionState, user_message: str) -> None:
+        if HARD_RESET_RE.search(user_message):
+            # A genuine restart replaces the whole conversational intent.  It
+            # is intentionally different from the evaluator's "ignore my
+            # earlier preference" message, which only replaces one soft value.
+            state.messages.clear()
+            state.asked_attributes.clear()
+            state.disclosed_attributes.clear()
+            state.excluded_values.clear()
+            state.superseded_values.clear()
+            state.recommended_ids.clear()
+            state.card_category = ""
+            state.card_constraints.clear()
+            state.override_preference_values.clear()
+            state.other_ask_count = 0
+            state.last_ask_attribute = ""
+            state.metadata_protocol_confident = False
+
+            restarted_message = HARD_RESET_RE.sub("", user_message, count=1)
+            restarted_message = restarted_message.lstrip(" .,!;:-\t\n")
+            if restarted_message:
+                self._capture_initial_override_preference(state, restarted_message)
+                state.messages.append(restarted_message)
+            self._refresh_preferences(state)
+            self._refresh_card_index_state(state)
+            return
+
         self._capture_initial_override_preference(state, user_message)
-        is_override = bool(OVERRIDE_RE.search(user_message))
+        preference_reset = bool(PREFERENCE_RESET_RE.search(user_message))
+        is_override = bool(OVERRIDE_RE.search(user_message)) or preference_reset
         if is_override:
             # Recommendations made before an intent change may become relevant
             # again under the replacement intent. Start diversification afresh.
             state.recommended_ids.clear()
-        if is_override and FULL_RESET_RE.search(user_message):
+        if is_override and preference_reset:
             # The opening tail is the replaceable soft preference. Constraints
             # disclosed on later turns remain valid and are not repeated by the
             # customer simulator, so preserve them while removing exact copies
@@ -752,7 +806,7 @@ class Agent:
                 superseded.update(previous_values.get(attribute, set()) - new_values)
                 superseded.difference_update(new_values)
         state.messages.append(user_message)
-        if is_override and FULL_RESET_RE.search(user_message):
+        if is_override and preference_reset:
             replacement_constraints = self._message_card_constraints(user_message)
             state.override_preference_values = replacement_constraints
         self._refresh_preferences(state)
@@ -813,7 +867,7 @@ class Agent:
         turn: int | None = None,
         card_candidate_rows: set[int] | None = None,
         evidence_level: str | None = None,
-    ) -> tuple[str, str]:
+    ) -> tuple[str | None, str]:
         """Ask an unanswered question that best separates current candidates."""
         del turn  # The state, rather than a template turn number, drives the policy.
         rows = card_candidate_rows or set()
@@ -827,7 +881,15 @@ class Agent:
         # One broad structured question lets a simulator—or a real user—supply
         # whichever constraint is most informative. Ask it at most twice, and
         # never immediately repeat it after a boundary/no-preference response.
-        if state.other_ask_count == 0:
+        looking_for_opening = bool(
+            state.messages and INITIAL_CATEGORY_RE.search(state.messages[0])
+        )
+        rich_freeform_request = (
+            not state.metadata_protocol_confident
+            and not looking_for_opening
+            and len(state.disclosed_attributes) >= 2
+        )
+        if state.other_ask_count == 0 and not rich_freeform_request:
             state.other_ask_count = 1
             state.last_ask_attribute = "other"
             state.asked_attributes.add("other")
@@ -840,7 +902,12 @@ class Agent:
         ):
             state.other_ask_count += 1
             state.last_ask_attribute = "other"
-            return "other", QUESTION_TEXT["other"]
+            message = (
+                AMBIGUOUS_QUESTION_TEXT
+                if len(rows) > 50
+                else QUESTION_TEXT["other"]
+            )
+            return "other", message
 
         priority = self._category_priority(query)
         available = [
@@ -849,6 +916,9 @@ class Agent:
             and attribute not in state.disclosed_attributes
         ]
         if not available:
+            if not state.metadata_protocol_confident:
+                state.last_ask_attribute = ""
+                return None, RESULTS_ONLY_MESSAGE
             state.last_ask_attribute = "other"
             return "other", QUESTION_TEXT["other"]
 
@@ -1067,9 +1137,13 @@ class Agent:
             ):
                 return base
             return top_k
-        if evidence_level != "strong" or not card_candidate_rows:
+        if evidence_level not in {"strong", "medium"} or not card_candidate_rows:
             return base
 
+        # Once exact card evidence exists, size the list so that every
+        # reachable candidate can be exposed before the ten-turn deadline.
+        # For very large collision groups the cap naturally becomes top_k,
+        # maximizing coverage without ever violating the Agent contract.
         unseen = sum(
             self._product_ids[row_index] not in state.recommended_ids
             for row_index in card_candidate_rows
@@ -1098,15 +1172,21 @@ class Agent:
         )
         seen = previously_recommended or set()
 
-        # Strong exact evidence is sufficient to avoid loading the embedding
-        # model at all. This makes the common metadata path both faster and less
-        # sensitive to a semantic model's ranking noise.
+        # Exact protocol evidence is sufficient to avoid loading the embedding
+        # model when it can fill this turn.  This applies to large/medium card
+        # collisions too: every exact row is more defensible than a soft-only
+        # semantic match, and a stable structure/popularity order makes results
+        # reproducible across CPU and CUDA machines.
         unseen_card_rows = [
             row_index
             for row_index in filtered_card_rows
             if self._product_ids[row_index] not in seen
         ]
-        if card_evidence_level == "strong" and len(unseen_card_rows) >= top_k:
+        has_exact_evidence = card_evidence_level in {"strong", "medium"}
+        stable_exact_shortcut = (
+            card_evidence_level == "strong" or len(filtered_card_rows) > 50
+        )
+        if stable_exact_shortcut and len(unseen_card_rows) >= top_k:
             ranked_card_rows = sorted(
                 unseen_card_rows,
                 key=lambda row_index: self._card_order_key(
@@ -1132,13 +1212,19 @@ class Agent:
         fused_scores = self._fuse_rankings(lexical_candidates, dense_candidates)
 
         if excluded_values:
-            fused_scores = {
+            unfiltered_scores = fused_scores
+            filtered_scores = {
                 row_index: score for row_index, score in fused_scores.items()
                 if not any(
                     values & self._product_attributes[row_index].get(attribute, set())
                     for attribute, values in excluded_values.items()
                 )
             }
+            # Real catalogs are noisy and a strict exclusion can occasionally
+            # remove the whole candidate pool.  Returning the least-bad matches
+            # is safer than an empty response; retain hard filtering whenever at
+            # least one compliant candidate exists.
+            fused_scores = filtered_scores or unfiltered_scores
             filtered_card_rows = self._filter_card_rows(
                 filtered_card_rows, excluded_values
             )
@@ -1160,7 +1246,7 @@ class Agent:
                 index,
             ),
         )
-        if card_evidence_level == "strong" and filtered_card_rows:
+        if has_exact_evidence and filtered_card_rows:
             exact_ranked = sorted(
                 filtered_card_rows & fused_scores.keys(),
                 key=lambda row_index: self._card_order_key(

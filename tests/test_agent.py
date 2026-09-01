@@ -102,20 +102,20 @@ class AgentTest(unittest.TestCase):
         first = self.agent.respond("session", "I need a shoe for running in size 10.", 1, 2)
         second = self.agent.respond(
             "session",
-            "I don't have an additional preference for other.",
+            "I don't have an additional preference for feature.",
             2,
             2,
         )
         third = self.agent.respond(
             "session",
-            "I don't have an additional preference for feature.",
+            "I don't have an additional preference for material.",
             3,
             2,
         )
 
-        self.assertEqual(first["ask_attribute"], "other")
-        self.assertEqual(second["ask_attribute"], "feature")
-        self.assertEqual(third["ask_attribute"], "material")
+        self.assertEqual(first["ask_attribute"], "feature")
+        self.assertEqual(second["ask_attribute"], "material")
+        self.assertNotIn(third["ask_attribute"], {"size", "use_case"})
 
     def test_question_policy_does_not_repeat_unhelpful_other_question(self) -> None:
         first = self.agent.respond("session", "I need a shoe.", 1, 2)
@@ -147,6 +147,69 @@ class AgentTest(unittest.TestCase):
 
         self.assertEqual(attribute, "other")
         self.assertEqual(state.other_ask_count, 2)
+
+    def test_large_collision_question_explains_the_ambiguity(self) -> None:
+        state = self.agent._sessions["session"]
+        state.messages = ["For that, what matters is: leather."]
+        state.card_constraints = ["leather"]
+        state.other_ask_count = 1
+        state.last_ask_attribute = "other"
+
+        attribute, message = self.agent._question(
+            state,
+            "leather shoes",
+            2,
+            set(range(51)),
+            "medium",
+        )
+
+        self.assertEqual(attribute, "other")
+        self.assertIn("many close matches", message.lower())
+
+    def test_rich_freeform_request_skips_redundant_broad_question(self) -> None:
+        response = self.agent.respond(
+            "session",
+            "I need blue leather running shoes under $80.",
+            1,
+            2,
+        )
+
+        self.assertNotEqual(response["ask_attribute"], "other")
+        self.assertNotIn("what matters most", response["message"].lower())
+
+    def test_generic_looking_for_opening_is_not_assumed_to_be_simulator(self) -> None:
+        state = self.agent._sessions["session"]
+        self.agent._remember(state, "I'm looking for Shoes.")
+
+        self.assertEqual(state.card_category, "shoes")
+        self.assertFalse(state.metadata_protocol_confident)
+        self.assertEqual(
+            self.agent._recommendation_count(state, set(), "weak", 1, 10),
+            10,
+        )
+
+    def test_exact_simulator_opening_enables_protocol_policy(self) -> None:
+        state = self.agent._sessions["session"]
+        self.agent._remember(
+            state,
+            "I'm looking for Shoes, but I'm still exploring.",
+        )
+
+        self.assertTrue(state.metadata_protocol_confident)
+        self.assertEqual(
+            self.agent._recommendation_count(state, set(), "weak", 1, 10),
+            2,
+        )
+
+    def test_looking_for_override_opening_keeps_broad_first_question(self) -> None:
+        response = self.agent.respond(
+            "session",
+            "I'm looking for Shoes. Blue leather would be nice.",
+            1,
+            2,
+        )
+
+        self.assertEqual(response["ask_attribute"], "other")
 
     def test_explicit_metadata_constraint_is_extracted_and_prioritized(self) -> None:
         response = self.agent.respond(
@@ -482,6 +545,83 @@ class AgentTest(unittest.TestCase):
 
         self.assertEqual(len(state.recommended_ids), 50)
 
+    def test_deadline_policy_scales_medium_collision_groups(self) -> None:
+        original_product_ids = self.agent._product_ids
+        try:
+            for size, expected_first_count in ((51, 6), (100, 10), (264, 10), (604, 10)):
+                with self.subTest(size=size):
+                    session_id = f"collision-{size}"
+                    self.agent.reset(session_id, {})
+                    state = self.agent._sessions[session_id]
+                    state.card_constraints = ["shared"]
+                    state.metadata_protocol_confident = True
+                    self.agent._product_ids = [f"P{index}" for index in range(size)]
+                    rows = set(range(size))
+
+                    first_count = self.agent._recommendation_count(
+                        state, rows, "medium", 1, 10
+                    )
+                    self.assertEqual(first_count, expected_first_count)
+
+                    for turn in range(1, 11):
+                        count = self.agent._recommendation_count(
+                            state, rows, "medium", turn, 10
+                        )
+                        unseen = [
+                            row_index
+                            for row_index in sorted(rows)
+                            if self.agent._product_ids[row_index]
+                            not in state.recommended_ids
+                        ]
+                        state.recommended_ids.update(
+                            self.agent._product_ids[row_index]
+                            for row_index in unseen[:count]
+                        )
+
+                    self.assertEqual(
+                        len(state.recommended_ids), min(size, 100)
+                    )
+        finally:
+            self.agent._product_ids = original_product_ids
+
+    def test_large_medium_collision_uses_stable_card_order_without_encoder(self) -> None:
+        original = (
+            self.agent._product_ids,
+            self.agent._popularity_percentiles,
+            self.agent._card_sequences,
+            self.agent._average_ratings,
+        )
+        try:
+            size = 51
+            self.agent._product_ids = [f"P{index}" for index in range(size)]
+            self.agent._popularity_percentiles = [
+                index / size for index in range(size)
+            ]
+            self.agent._card_sequences = [("shared",)] * size
+            self.agent._average_ratings = [4.0] * size
+
+            recommendations = self.agent._recommend(
+                "shoes",
+                10,
+                card_candidate_rows=set(range(size)),
+                card_constraints=["shared"],
+                card_category="shoes",
+                card_evidence_level="medium",
+            )
+
+            self.assertEqual(
+                [item["parent_asin"] for item in recommendations],
+                [f"P{index}" for index in range(50, 40, -1)],
+            )
+            self.assertEqual(self.agent.encoder.encoded_batches, [])
+        finally:
+            (
+                self.agent._product_ids,
+                self.agent._popularity_percentiles,
+                self.agent._card_sequences,
+                self.agent._average_ratings,
+            ) = original
+
     def test_confidence_is_computed_before_exclusion_filtering(self) -> None:
         state = self.agent._sessions["session"]
         state.card_constraints = ["one"]
@@ -492,6 +632,18 @@ class AgentTest(unittest.TestCase):
 
         self.assertEqual(raw_level, "medium")
         self.assertEqual(len(filtered_rows), 2)
+
+    def test_exclusions_fail_open_instead_of_returning_no_results(self) -> None:
+        recommendations = self.agent._recommend(
+            "shoe",
+            2,
+            excluded_values={
+                "material": {"leather"},
+                "feature": {"comfort"},
+            },
+        )
+
+        self.assertEqual(len(recommendations), 2)
 
     def test_strong_shortcut_requires_enough_unseen_exact_rows(self) -> None:
         self.agent._sessions["session"].recommended_ids.add("LEATHER")
@@ -621,6 +773,54 @@ class AgentTest(unittest.TestCase):
         self.assertIn("running", query)
         self.assertIn("$100", query)
         self.assertEqual(response["recommendations"][0]["parent_asin"], "RUNNING")
+
+    def test_start_over_clears_the_old_intent_and_conversation_state(self) -> None:
+        state = self.agent._sessions["session"]
+        self.agent._remember(
+            state,
+            "I'm looking for Shoes. A key requirement is: leather upper.",
+        )
+        state.asked_attributes.add("material")
+        state.excluded_values["color"] = {"red"}
+        state.superseded_values["style"] = {"formal"}
+        state.recommended_ids.add("LEATHER")
+
+        self.agent._remember(
+            state,
+            "Start over. I'm looking for Dresses, but I'm still exploring.",
+        )
+
+        self.assertEqual(
+            state.messages,
+            ["I'm looking for Dresses, but I'm still exploring."],
+        )
+        self.assertEqual(state.card_category, "dresses")
+        self.assertEqual(state.card_constraints, [])
+        self.assertEqual(state.asked_attributes, set())
+        self.assertEqual(state.excluded_values, {})
+        self.assertEqual(state.superseded_values, {})
+        self.assertEqual(state.recommended_ids, set())
+        self.assertTrue(state.metadata_protocol_confident)
+
+    def test_negated_start_over_does_not_clear_the_current_intent(self) -> None:
+        state = self.agent._sessions["session"]
+        self.agent._remember(
+            state,
+            "I'm looking for Shoes. A key requirement is: leather upper.",
+        )
+
+        self.agent._remember(
+            state,
+            "I don't want to start over; keep the shoes.",
+        )
+        self.agent._remember(
+            state,
+            "Please don't forget everything; keep the leather requirement.",
+        )
+
+        self.assertEqual(state.card_category, "shoes")
+        self.assertEqual(state.card_constraints, ["leather upper"])
+        self.assertEqual(len(state.messages), 3)
 
     def test_respond_requires_reset(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "reset must be called"):

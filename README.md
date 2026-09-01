@@ -64,29 +64,55 @@ Available tasks:
 | `pixi run check` | Run unit tests and validate both datasets |
 | `pixi run runtime-check` | Verify the active Python, NumPy/BLAS, Torch, and device runtime |
 | `pixi run evaluate` | Run the starter on the public set and write `results.json` |
+| `pixi run evaluate-robustness` | Run the 40-session distribution-aware pseudo-private audit |
 | `pixi run evaluate-offline-cpu` | Evaluate with CPU and Hugging Face offline mode enforced |
 
 Python 3.10–3.13 and the Sentence Transformers/PyTorch dependencies are locked through `pixi.toml`.
 
 Edit `starter/agent.py` to implement your system. Do not edit the evaluator or public labels when reporting your local score.
 The command writes per-session results and aggregate metrics to `results.json`.
+When comparing machines, share that generated file rather than copying the terminal summary: the file contains
+all 200 per-session records, while the console intentionally omits them. Record the Git commit, data hashes,
+`BERT_MODEL_NAME`, and `BERT_DEVICE`; a 40-session subset or robustness slice is not comparable to the public
+200-session score.
 
 The historical weak BM25 starter scores Hit Rate@10 `0.125`, MRR `0.068034`, and
 MTTC `9.81` on the released public set. See `docs/baseline_results.json`.
+
+## Distribution-aware robustness audit
+
+The public labels have been used repeatedly during development, so the repository also includes a small
+pseudo-private audit that excludes all 200 public target ASINs. It uses the official simulator unchanged and
+constructs two 20-session suites with the exact 40/40/15/5 scenario mix:
+
+- `matched` selects unseen catalog products matched to public targets on broad category, popularity, rating,
+  price, metadata completeness, catalog cohort, and intent-card collision statistics;
+- `collision_stress` keeps 12 matched targets and replaces 8 with the public set's uncovered
+  `full-card candidate count > 50` blind spot. This slice is diagnostic and is not a private-score estimate.
+
+Run the full 40-session audit with `pixi run evaluate-robustness`. To generate and inspect the deterministic
+target manifest and calibration without loading the retrieval model, run:
+
+```bash
+pixi run python -m scripts.evaluate_robustness --skip-evaluation --output robustness_manifest.json
+```
+
+The checked-in run and interpretation are in `robustness_results.json` and
+[`docs/robustness_evaluation.md`](docs/robustness_evaluation.md).
 
 ## Metadata-first hybrid strategy
 
 The current starter combines deterministic catalog evidence with a local semantic fallback:
 
-1. It opens with one broad structured question, optionally asks it once more when evidence remains weak,
-   and then falls back to candidate-aware feature/material questions.
-2. Exact metadata constraints build a confidence-scored intent-card candidate set. Strong matches are ranked
-   first; empty or ambiguous matches always fall back to hybrid retrieval.
-3. Early turns return a narrow, diversified list for MRR. Unique strong matches return one item, while the
-   final turn widens to the full evaluator allowance for recall.
+1. Simulator-shaped sessions open with one broad structured question and then use candidate-aware questions;
+   information-rich free-form requests skip the redundant broad question.
+2. Exact metadata constraints build a confidence-scored intent-card candidate set. Both narrow and large
+   collision sets use stable structure/relevance/popularity ordering; empty matches fall back to hybrid retrieval.
+3. Early turns use narrow lists when evidence permits. Exact candidate sets widen according to the number of
+   unseen candidates and turns remaining, so a large collision group gets up to the full Top 10 before deadline.
 4. A small category-normalized popularity prior breaks close ties without replacing retrieval relevance.
-5. Intent overrides remove the superseded opening preference while retaining constraints disclosed on later
-   turns. Recommendation history is reset so previously shown products can be reconsidered.
+5. Intent overrides remove the superseded opening preference while retaining later constraints. A genuine
+   `start over` clears the whole conversational state instead of leaking the old category into the new search.
 6. SQLite FTS5/BM25 and `sentence-transformers/all-MiniLM-L6-v2` remain the semantic fallback when exact
    evidence is unavailable. The Agent reports zero API tokens.
 
