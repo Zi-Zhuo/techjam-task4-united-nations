@@ -201,8 +201,8 @@ class Agent:
 
 ## Development-set result
 
-The latest local run in `results.json` used the official 200-session public evaluator and the current L12 agent
-code. These are development metrics, not an estimate or guarantee of the private evaluation score.
+The archived [`results_final.json`](results_final.json) run used the official 200-session public evaluator and the
+current L12 agent code. These are development metrics, not an estimate or guarantee of the private evaluation score.
 
 | Metric | Result |
 | --- | ---: |
@@ -280,6 +280,7 @@ public-set overfitting; it is not access to evaluator state or target labels.
 | `docs/agent_api_contract.json` | Machine-readable Agent API |
 | `docs/evaluation_config.json` | Official metric configuration |
 | `data/public_set.jsonl` | Public development sessions; never read by the Agent |
+| `results_final.json` | Archived public development result reported above |
 | `scripts/data.py` | Catalog download and validation |
 | `scripts/web_demo.py`, `demo/index.html` | Loopback-only conversation demo |
 | `scripts/demo_evaluation_session.py` | Demo-only turn replay adapter |
