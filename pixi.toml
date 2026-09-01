@@ -1,7 +1,7 @@
 [workspace]
 name = "techjam-conversational-search"
 version = "0.1.0"
-description = "Reproducible environment for the TechJam Conversational E-Commerce Search Challenge"
+description = "Reproducible final submission for the TechJam Conversational E-Commerce Search Challenge"
 channels = ["conda-forge"]
 platforms = [
     { platform = "linux-64", cuda = "12" },

@@ -299,7 +299,7 @@ def _auto_device(requested: str | None = None) -> str:
 
 
 class Agent:
-    """Conversation-first BM25 retrieval with Sentence-BERT reranking.
+    """Metadata-first conversational retrieval with a BM25/dense fallback.
 
     ``encoder`` is injectable so the retrieval and conversation policy can be
     tested without downloading a model. In normal use, ``SentenceTransformer``
@@ -536,7 +536,7 @@ class Agent:
 
     def reset(self, session_id: str, user_profile: dict) -> None:
         # The profile stays available to future personalization extensions; the
-        # baseline intentionally retrieves only from what the customer says.
+        # submitted agent retrieves only from what the customer says.
         self._sessions[session_id] = SessionState()
 
     @staticmethod
