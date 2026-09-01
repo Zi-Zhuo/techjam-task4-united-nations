@@ -34,7 +34,7 @@ if os.name == "nt" and hasattr(os, "add_dll_directory"):
 import numpy as np
 
 
-DEFAULT_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+DEFAULT_MODEL_NAME = "sentence-transformers/all-MiniLM-L12-v2"
 TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 OVERRIDE_RE = re.compile(
     r"\b(actually|instead|changed my mind|ignore (?:my )?(?:earlier|previous)|no longer)\b",

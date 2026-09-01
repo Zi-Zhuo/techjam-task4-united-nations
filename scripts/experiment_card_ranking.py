@@ -71,7 +71,7 @@ class CardRankingExperimentAgent(Agent):
         *,
         mode: str = "baseline",
         popularity_weight: float = 0.005,
-        model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
+        model_name: str = "sentence-transformers/all-MiniLM-L12-v2",
     ) -> None:
         super().__init__(catalog_path, model_name=model_name)
         self.mode = mode
@@ -195,7 +195,7 @@ def main() -> None:
     parser.add_argument("--popularity-weight", type=float, default=0.005)
     parser.add_argument(
         "--model-name",
-        default="sentence-transformers/all-MiniLM-L6-v2",
+        default="sentence-transformers/all-MiniLM-L12-v2",
     )
     parser.add_argument(
         "--modes",

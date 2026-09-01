@@ -832,14 +832,14 @@ class AgentTest(unittest.TestCase):
         self.assertEqual(forced.device, "cpu")
         forced.connection.close()
 
-    def test_default_model_matches_bundled_l6_artifacts(self) -> None:
+    def test_default_model_uses_minilm_l12(self) -> None:
         self.assertEqual(
             self.agent.model_name,
             DEFAULT_MODEL_NAME,
         )
         self.assertEqual(
             DEFAULT_MODEL_NAME,
-            "sentence-transformers/all-MiniLM-L6-v2",
+            "sentence-transformers/all-MiniLM-L12-v2",
         )
 
     def test_catalog_embeddings_are_reused_from_cache(self) -> None:
